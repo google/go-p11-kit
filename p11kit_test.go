@@ -21,8 +21,8 @@ const (
 
 func testRequiresP11Tools(t *testing.T) {
 	//	t.Skip("skipping e2e tests")
-	if _, err := exec.LookPath("p11tool"); err != nil {
-		t.Skip("p11tool not available, skipping test")
+	if _, err := exec.LookPath("pkcs11-tool"); err != nil {
+		t.Skip("pkcs11-tool not available, skipping test")
 	}
 	if _, err := os.Stat(p11KitClientPath); err != nil {
 		t.Skip("p11-kit-client.so not available, skipping test")
@@ -187,45 +187,60 @@ func (t *testServer) closeSession(id SessionID) error {
 	return nil
 }
 
-func TestListTokens(t *testing.T) {
+func TestPKCS11Tool(t *testing.T) {
 	testRequiresP11Tools(t)
 
-	l, path := newListener(t)
-
-	ts := testServer{}
-	h := ts.server()
-
-	errCh := make(chan error)
-	go func() {
-		conn, err := l.Accept()
-		if err != nil {
-			errCh <- err
-			return
-		}
-		conn.SetDeadline(time.Now().Add(time.Second * 10))
-		errCh <- h.Handle(conn)
-	}()
-
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
-	defer cancel()
-
-	var stdout, stderr bytes.Buffer
-	cmd := exec.CommandContext(ctx, "p11tool",
-		"--debug=9999",
-		"--provider", p11KitClientPath,
-		"--list-tokens")
-	cmd.Env = append(os.Environ(),
-		"P11_KIT_DEBUG=all",
-		p11KitEnvServerPID+"="+strconv.Itoa(os.Getpid()),
-		p11KitEnvServerAddr+"=unix:path="+path,
-	)
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	if err := cmd.Run(); err != nil {
-		t.Errorf("command failed: %v: %s", err, &stderr)
+	tests := []struct {
+		name string
+		args []string
+	}{
+		{"ListSlots", []string{"--list-slots"}},
+		{"ListTokenSlots", []string{"--list-token-slots"}},
 	}
-	if err := <-errCh; err != nil {
-		t.Errorf("handle error: %v", err)
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			l, path := newListener(t)
+
+			ts := testServer{}
+			h := ts.server()
+
+			errCh := make(chan error)
+			go func() {
+				conn, err := l.Accept()
+				if err != nil {
+					errCh <- err
+					return
+				}
+				conn.SetDeadline(time.Now().Add(time.Second * 10))
+				errCh <- h.Handle(conn)
+			}()
+
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
+			defer cancel()
+
+			var stdout, stderr bytes.Buffer
+			cmd := exec.CommandContext(ctx, "pkcs11-tool",
+				append([]string{
+					"--verbose",
+					"--module", p11KitClientPath,
+				}, test.args...)...)
+			cmd.Env = append(os.Environ(),
+				"P11_KIT_DEBUG=all",
+				p11KitEnvServerPID+"="+strconv.Itoa(os.Getpid()),
+				p11KitEnvServerAddr+"=unix:path="+path,
+			)
+			cmd.Stdout = &stdout
+			cmd.Stderr = &stderr
+
+			if err := cmd.Run(); err != nil {
+				t.Errorf("command failed: %v: %s", err, &stderr)
+			} else {
+				t.Logf("%s", &stdout)
+			}
+			if err := <-errCh; err != nil {
+				t.Errorf("handle error: %v", err)
+			}
+		})
 	}
 }
