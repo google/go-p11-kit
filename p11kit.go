@@ -406,11 +406,23 @@ func (s *Server) handleGetSlotInfo(req *rpc.Body) (*rpc.Body, error) {
 		return nil, err
 	}
 
+	// http://docs.oasis-open.org/pkcs11/pkcs11-base/v2.40/os/pkcs11-base-v2.40-os.html#_Toc416959687
+	var flags uint64
+	if info.TokenPresent {
+		flags |= 0x01
+	}
+	if info.RemovableDevice {
+		flags |= 0x02
+	}
+	if info.HardwareSlot {
+		flags |= 0x04
+	}
+
 	// https://github.com/p11-glue/p11-kit/blob/0.24.0/p11-kit/rpc-client.c#L467
 	resp := &rpc.Body{Call: rpc.CallGetSlotInfo}
 	resp.AppendString(info.Description, 64)
 	resp.AppendString(info.ManufacturerID, 32)
-	resp.AppendUlong(0)
+	resp.AppendUlong(flags)
 	resp.AppendVersion(info.HardwareVersion.Major, info.HardwareVersion.Minor)
 	resp.AppendVersion(info.FirmwareVersion.Major, info.FirmwareVersion.Minor)
 	return resp, nil
