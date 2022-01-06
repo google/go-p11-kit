@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"math"
 	"time"
 
@@ -171,11 +170,15 @@ const (
 //
 //// This corresponds to CK_SLOT_INFO.
 type SlotInfo struct {
-	Description     string // Limit of 64 bytes
-	ManufacturerID  string // Limit of 32 bytes
+	Description    string // Limit of 64 bytes
+	ManufacturerID string // Limit of 32 bytes
+
+	// TODO(ericchiang): encode these values in flags.
+
 	TokenPresent    bool
 	RemovableDevice bool
 	HardwareSlot    bool
+
 	HardwareVersion Version
 	FirmwareVersion Version
 }
@@ -230,6 +233,9 @@ type Server struct {
 	GetSlotList  func(tokenPresnt bool) ([]SlotID, error)
 	GetSlotInfo  func(id SlotID) (*SlotInfo, error)
 	GetTokenInfo func(id SlotID) (*TokenInfo, error)
+
+	OpenSession  func(id SlotID, flags uint64) (SessionID, error)
+	CloseSession func(id SessionID) error
 }
 
 // Handle begins serving RPC requests. p11-kit sessions are per-connection, not
@@ -244,30 +250,30 @@ func (s *Server) Handle(rw io.ReadWriter) error {
 	}
 
 	done := false
+	handlers := map[rpc.Call]func(*rpc.Body) (*rpc.Body, error){
+		rpc.CallFinalize: func(req *rpc.Body) (*rpc.Body, error) {
+			done = true
+			return req, nil
+		},
+		rpc.CallInitialize:   s.handleInitialize,
+		rpc.CallGetInfo:      s.handleGetInfo,
+		rpc.CallGetSlotList:  s.handleGetSlotList,
+		rpc.CallGetTokenInfo: s.handleGetTokenInfo,
+		rpc.CallGetSlotInfo:  s.handleGetSlotInfo,
+		rpc.CallOpenSession:  s.handleOpenSession,
+		rpc.CallCloseSession: s.handleCloseSession,
+	}
+
 	for !done {
 		callID, req, err := rpc.ReadRequest(rw)
 		if err != nil {
 			return fmt.Errorf("read request: %v", err)
 		}
-		log.Printf("%s", req.Call)
 		var resp *rpc.Body
-		switch req.Call {
-		case rpc.CallInitialize:
-			resp, err = s.handleInitialize(req)
-		case rpc.CallFinalize:
-			resp = req
-			done = true
-		case rpc.CallGetInfo:
-			resp, err = s.handleGetInfo(req)
-		case rpc.CallGetSlotList:
-			resp, err = s.handleGetSlotList(req)
-		case rpc.CallGetTokenInfo:
-			resp, err = s.handleGetTokenInfo(req)
-		case rpc.CallGetSlotInfo:
-			resp, err = s.handleGetSlotInfo(req)
-		default:
+		if h, ok := handlers[req.Call]; ok {
+			resp, err = h(req)
+		} else {
 			err = ErrFunctionNotSupported
-			log.Printf("unexpected rpc request: %s", req.Call)
 		}
 		if err != nil {
 			var cerr Error
@@ -279,7 +285,6 @@ func (s *Server) Handle(rw io.ReadWriter) error {
 			resp = &rpc.Body{Call: rpc.CallError}
 			resp.AppendUlong(uint64(cerr))
 		}
-		log.Println("Writing response")
 		if err := rpc.WriteResponse(rw, callID, resp); err != nil {
 			return fmt.Errorf("writing response: %v", err)
 		}
@@ -444,6 +449,53 @@ func (s *Server) handleGetSlotList(req *rpc.Body) (*rpc.Body, error) {
 		}
 		resp.AppendUlongs(sli)
 	}
+	return resp, nil
+}
+
+func (s *Server) handleOpenSession(req *rpc.Body) (*rpc.Body, error) {
+	// https://github.com/p11-glue/p11-kit/blob/0.24.0/p11-kit/rpc-client.c#L980
+	slotID, err := req.Ulong()
+	if err != nil {
+		return nil, fmt.Errorf("decode slot id: %v", err)
+	}
+	flags, err := req.Ulong()
+	if err != nil {
+		return nil, fmt.Errorf("decode flags: %v", err)
+	}
+	if err := req.Close(); err != nil {
+		return nil, err
+	}
+
+	if s.OpenSession == nil {
+		return nil, ErrFunctionNotSupported
+	}
+	sessionID, err := s.OpenSession(SlotID(slotID), flags)
+	if err != nil {
+		return nil, err
+	}
+
+	resp := &rpc.Body{Call: rpc.CallOpenSession}
+	resp.AppendUlong(uint64(sessionID))
+	return resp, nil
+}
+
+func (s *Server) handleCloseSession(req *rpc.Body) (*rpc.Body, error) {
+	// https://github.com/p11-glue/p11-kit/blob/0.24.0/p11-kit/rpc-client.c#L998
+	id, err := req.Ulong()
+	if err != nil {
+		return nil, fmt.Errorf("decode session id: %v", err)
+	}
+	if err := req.Close(); err != nil {
+		return nil, err
+	}
+	if s.CloseSession == nil {
+		return nil, ErrFunctionNotSupported
+	}
+	if err := s.CloseSession(SessionID(id)); err != nil {
+		return nil, err
+	}
+
+	resp := &rpc.Body{Call: rpc.CallCloseSession}
 	return resp, nil
 }
 

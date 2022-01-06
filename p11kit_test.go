@@ -1,6 +1,7 @@
 package p11kit
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"net"
@@ -46,7 +47,9 @@ func newListener(t *testing.T) (net.Listener, string) {
 type testServer struct {
 	initialized bool
 
-	sessions map[uint64]testSession
+	sessions map[SessionID]*testSession
+
+	lastSessionID SessionID
 }
 
 func (t *testServer) server() *Server {
@@ -56,11 +59,22 @@ func (t *testServer) server() *Server {
 		GetSlotList:  t.getSlotList,
 		GetSlotInfo:  t.getSlotInfo,
 		GetTokenInfo: t.getTokenInfo,
+		OpenSession:  t.openSession,
+		CloseSession: t.closeSession,
 	}
 }
 
 type testSession struct {
 	slotID SlotID
+}
+
+func (t *testServer) validSlot(id SlotID) error {
+	switch id {
+	case 0x01, 0x02:
+		return nil
+	default:
+		return ErrSlotIDInvalid
+	}
 }
 
 func (t *testServer) initialize(args *InitializeArgs) error {
@@ -88,10 +102,8 @@ func (t *testServer) getSlotList(tokenPresent bool) ([]SlotID, error) {
 }
 
 func (t *testServer) getSlotInfo(id SlotID) (*SlotInfo, error) {
-	switch id {
-	case 0x01, 0x02:
-	default:
-		return nil, ErrSlotIDInvalid
+	if err := t.validSlot(id); err != nil {
+		return nil, err
 	}
 	return &SlotInfo{
 		Description:     fmt.Sprintf("slot-%d", id),
@@ -111,10 +123,8 @@ func (t *testServer) getSlotInfo(id SlotID) (*SlotInfo, error) {
 }
 
 func (t *testServer) getTokenInfo(id SlotID) (*TokenInfo, error) {
-	switch id {
-	case 0x01, 0x02:
-	default:
-		return nil, ErrSlotIDInvalid
+	if err := t.validSlot(id); err != nil {
+		return nil, err
 	}
 
 	return &TokenInfo{
@@ -144,13 +154,44 @@ func (t *testServer) getTokenInfo(id SlotID) (*TokenInfo, error) {
 	}, nil
 }
 
-func TestGetInfo(t *testing.T) {
+func (t *testServer) openSession(id SlotID, flags uint64) (SessionID, error) {
+	if err := t.validSlot(id); err != nil {
+		return 0, err
+	}
+
+	// TODO(ericchiang): check flags here
+
+	if t.sessions == nil {
+		t.sessions = make(map[SessionID]*testSession)
+	}
+	nextSessionID := t.lastSessionID + 1
+	for {
+		if _, ok := t.sessions[nextSessionID]; !ok {
+			break
+		}
+		nextSessionID++
+	}
+	t.lastSessionID = nextSessionID
+	t.sessions[nextSessionID] = &testSession{
+		slotID: id,
+	}
+	return nextSessionID, nil
+}
+
+func (t *testServer) closeSession(id SessionID) error {
+	_, ok := t.sessions[id]
+	delete(t.sessions, id)
+	if !ok {
+		return ErrSessionHandleInvalid
+	}
+	return nil
+}
+
+func TestListTokens(t *testing.T) {
 	testRequiresP11Tools(t)
 
 	l, path := newListener(t)
-	defer l.Close()
 
-	initializeCalled := false
 	ts := testServer{}
 	h := ts.server()
 
@@ -158,30 +199,33 @@ func TestGetInfo(t *testing.T) {
 	go func() {
 		conn, err := l.Accept()
 		if err != nil {
-			l.Close()
 			errCh <- err
 			return
 		}
+		conn.SetDeadline(time.Now().Add(time.Second * 10))
 		errCh <- h.Handle(conn)
 	}()
+
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "p11tool", "--debug=9999", "--provider", p11KitClientPath, "--list-tokens")
+
+	var stdout, stderr bytes.Buffer
+	cmd := exec.CommandContext(ctx, "p11tool",
+		"--debug=9999",
+		"--provider", p11KitClientPath,
+		"--list-tokens")
 	cmd.Env = append(os.Environ(),
 		"P11_KIT_DEBUG=all",
 		p11KitEnvServerPID+"="+strconv.Itoa(os.Getpid()),
 		p11KitEnvServerAddr+"=unix:path="+path,
 	)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Errorf("command failed: %v: %s", err, out)
-	} else {
-		t.Logf("command output: %s", out)
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		t.Errorf("command failed: %v: %s", err, &stderr)
 	}
 	if err := <-errCh; err != nil {
 		t.Errorf("handle error: %v", err)
-	}
-	if !initializeCalled {
-		t.Errorf("Initialize() never called")
 	}
 }
