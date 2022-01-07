@@ -196,6 +196,7 @@ func TestPKCS11Tool(t *testing.T) {
 	}{
 		{"ListSlots", []string{"--list-slots"}},
 		{"ListTokenSlots", []string{"--list-token-slots"}},
+		{"ListObjects", []string{"--list-objects"}},
 	}
 
 	for _, test := range tests {

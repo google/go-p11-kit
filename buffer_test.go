@@ -1,4 +1,4 @@
-package rpc
+package p11kit
 
 import (
 	"bytes"
@@ -66,9 +66,9 @@ func TestBuffer(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			b := newBuffer(test.in)
-			got := test.do(b)
-			if len(b.Bytes()) != 0 {
-				t.Errorf("Bytes() after read got=%x, expected no bytes", b.Bytes())
+			got := test.do(&b)
+			if len(b.bytes()) != 0 {
+				t.Errorf("bytes() after read got=%x, expected no bytes", b.bytes())
 			}
 			if !reflect.DeepEqual(got, test.want) {
 				t.Errorf("Decoding got=%#v, want=%#v", got, test.want)
@@ -118,9 +118,9 @@ func TestBufferAdd(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			b := &buffer{}
 			test.do(b)
-			got := b.Bytes()
+			got := b.bytes()
 			if !bytes.Equal(got, test.want) {
-				t.Errorf("Bytes() got=%x, want=%x", got, test.want)
+				t.Errorf("bytes() got=%x, want=%x", got, test.want)
 			}
 		})
 	}

@@ -250,8 +250,8 @@ func (s *Server) Handle(rw io.ReadWriter) error {
 	}
 
 	done := false
-	handlers := map[rpc.Call]func(*rpc.Body) (*rpc.Body, error){
-		rpc.CallFinalize: func(req *rpc.Body) (*rpc.Body, error) {
+	handlers := map[rpc.Call]func(*body) (*body, error){
+		rpc.CallFinalize: func(req *body) (*body, error) {
 			done = true
 			return req, nil
 		},
@@ -265,12 +265,12 @@ func (s *Server) Handle(rw io.ReadWriter) error {
 	}
 
 	for !done {
-		callID, req, err := rpc.ReadRequest(rw)
+		callID, req, err := readRequest(rw)
 		if err != nil {
 			return fmt.Errorf("read request: %v", err)
 		}
-		var resp *rpc.Body
-		if h, ok := handlers[req.Call]; ok {
+		var resp *body
+		if h, ok := handlers[rpc.Call(req.call)]; ok {
 			resp, err = h(req)
 		} else {
 			err = ErrFunctionNotSupported
@@ -278,38 +278,35 @@ func (s *Server) Handle(rw io.ReadWriter) error {
 		if err != nil {
 			var cerr Error
 			if !errors.As(err, &cerr) {
-				return fmt.Errorf("%s failed: %v", req.Call, err)
+				return fmt.Errorf("%d failed: %v", req.call, err)
 			}
 
 			// https://github.com/p11-glue/p11-kit/blob/0.24.0/p11-kit/rpc-client.c#L142-L143
-			resp = &rpc.Body{Call: rpc.CallError}
-			resp.AppendUlong(uint64(cerr))
+			resp = &body{call: uint32(rpc.CallError)}
+			resp.writeUlong(uint64(cerr))
 		}
-		if err := rpc.WriteResponse(rw, callID, resp); err != nil {
+		if err := writeResponse(rw, callID, resp); err != nil {
 			return fmt.Errorf("writing response: %v", err)
 		}
 	}
 	return nil
 }
 
-func (s *Server) handleInitialize(req *rpc.Body) (*rpc.Body, error) {
+func (s *Server) handleInitialize(req *body) (*body, error) {
 	// https://github.com/p11-glue/p11-kit/blob/0.24.0/p11-kit/rpc-message.h#L215
 	const handshakeMessage = "PRIVATE-GNOME-KEYRING-PKCS11-PROTOCOL-V-1"
 
 	// https://github.com/p11-glue/p11-kit/blob/0.24.0/p11-kit/rpc-client.c#L774-L792
 
-	handshake, err := req.Bytes()
-	if err != nil {
-		return nil, fmt.Errorf("read handshake: %v", err)
-	}
-	if _, err := req.Byte(); err != nil {
-		return nil, fmt.Errorf("read reserved byte: %v", err)
-	}
-	if _, _, err := req.BytesOrLength(); err != nil {
-		return nil, fmt.Errorf("read reserved data: %v", err)
-	}
-	if err := req.Close(); err != nil {
-		return nil, fmt.Errorf("processing request: %v", err)
+	var (
+		handshake []byte
+		reserved  byte
+	)
+	req.readByteArray(&handshake, nil)
+	req.readByte(&reserved)
+	req.readByteArray(nil, nil) // reserved data
+	if err := req.err(); err != nil {
+		return nil, err
 	}
 	if string(handshake) != handshakeMessage {
 		return nil, fmt.Errorf("client sent unexpected handshake message: %s", handshake)
@@ -320,12 +317,12 @@ func (s *Server) handleInitialize(req *rpc.Body) (*rpc.Body, error) {
 	if err := s.Initialize(&InitializeArgs{}); err != nil {
 		return nil, fmt.Errorf("initializing module: %w", err)
 	}
-	return &rpc.Body{Call: req.Call}, nil
+	return newResponse(req), nil
 }
 
-func (s *Server) handleGetInfo(req *rpc.Body) (*rpc.Body, error) {
-	if err := req.Close(); err != nil {
-		return nil, fmt.Errorf("processing request: %v", err)
+func (s *Server) handleGetInfo(req *body) (*body, error) {
+	if err := req.err(); err != nil {
+		return nil, err
 	}
 	if s.GetInfo == nil {
 		return nil, ErrFunctionNotSupported
@@ -334,22 +331,20 @@ func (s *Server) handleGetInfo(req *rpc.Body) (*rpc.Body, error) {
 	if err != nil {
 		return nil, fmt.Errorf("get module info: %w", err)
 	}
-	resp := &rpc.Body{Call: rpc.CallGetInfo}
-	resp.AppendVersion(info.CryptokiVersion.Major, info.CryptokiVersion.Minor)
-	resp.AppendString(info.Manufacturer, 32)
-	resp.AppendUlong(0) // Flags is always zero.
-	resp.AppendString(info.Library, 32)
-	resp.AppendVersion(info.LibraryVersion.Major, info.LibraryVersion.Minor)
+	resp := newResponse(req)
+	resp.writeVersion(info.CryptokiVersion)
+	resp.writeString(info.Manufacturer, 32)
+	resp.writeUlong(0) // Flags is always zero.
+	resp.writeString(info.Library, 32)
+	resp.writeVersion(info.LibraryVersion)
 	return resp, nil
 }
 
-func (s *Server) handleGetTokenInfo(req *rpc.Body) (*rpc.Body, error) {
+func (s *Server) handleGetTokenInfo(req *body) (*body, error) {
 	// https://github.com/p11-glue/p11-kit/blob/0.24.0/p11-kit/rpc-client.c#L905
-	slotID, err := req.Ulong()
-	if err != nil {
-		return nil, fmt.Errorf("reading slot ID")
-	}
-	if err := req.Close(); err != nil {
+	var slotID uint64
+	req.readUlong(&slotID)
+	if err := req.err(); err != nil {
 		return nil, err
 	}
 	if s.GetTokenInfo == nil {
@@ -360,42 +355,40 @@ func (s *Server) handleGetTokenInfo(req *rpc.Body) (*rpc.Body, error) {
 		return nil, err
 	}
 
-	resp := &rpc.Body{Call: rpc.CallGetTokenInfo}
+	resp := newResponse(req)
 	// https://github.com/p11-glue/p11-kit/blob/0.24.0/p11-kit/rpc-client.c#L484
-	resp.AppendString(info.Label, 32)
-	resp.AppendString(info.ManufacturerID, 32)
+	resp.writeString(info.Label, 32)
+	resp.writeString(info.ManufacturerID, 32)
 
-	resp.AppendString(info.Model, 16)
-	resp.AppendString(info.SerialNumber, 16)
+	resp.writeString(info.Model, 16)
+	resp.writeString(info.SerialNumber, 16)
 
-	resp.AppendUlong(info.Flags)
+	resp.writeUlong(info.Flags)
 
-	resp.AppendUlong(info.MaxSessionCount)
-	resp.AppendUlong(info.SessionCount)
-	resp.AppendUlong(info.MaxRWSessionCount)
-	resp.AppendUlong(info.RWSessionCount)
+	resp.writeUlong(info.MaxSessionCount)
+	resp.writeUlong(info.SessionCount)
+	resp.writeUlong(info.MaxRWSessionCount)
+	resp.writeUlong(info.RWSessionCount)
 
-	resp.AppendUlong(info.MaxPINLen)
-	resp.AppendUlong(info.MinPINLen)
+	resp.writeUlong(info.MaxPINLen)
+	resp.writeUlong(info.MinPINLen)
 
-	resp.AppendUlong(info.TotalPublicMemory)
-	resp.AppendUlong(info.FreePublicMemory)
-	resp.AppendUlong(info.TotalPrivateMemory)
-	resp.AppendUlong(info.FreePrivateMemory)
+	resp.writeUlong(info.TotalPublicMemory)
+	resp.writeUlong(info.FreePublicMemory)
+	resp.writeUlong(info.TotalPrivateMemory)
+	resp.writeUlong(info.FreePrivateMemory)
 
-	resp.AppendVersion(info.HardwareVersion.Major, info.HardwareVersion.Minor)
-	resp.AppendVersion(info.FirmwareVersion.Major, info.FirmwareVersion.Minor)
+	resp.writeVersion(info.HardwareVersion)
+	resp.writeVersion(info.FirmwareVersion)
 
-	resp.AppendString("", 16)
+	resp.writeString("", 16)
 	return resp, nil
 }
 
-func (s *Server) handleGetSlotInfo(req *rpc.Body) (*rpc.Body, error) {
-	slotID, err := req.Ulong()
-	if err != nil {
-		return nil, fmt.Errorf("reading slot ID")
-	}
-	if err := req.Close(); err != nil {
+func (s *Server) handleGetSlotInfo(req *body) (*body, error) {
+	var slotID uint64
+	req.readUlong(&slotID)
+	if err := req.err(); err != nil {
 		return nil, err
 	}
 	if s.GetSlotInfo == nil {
@@ -419,29 +412,27 @@ func (s *Server) handleGetSlotInfo(req *rpc.Body) (*rpc.Body, error) {
 	}
 
 	// https://github.com/p11-glue/p11-kit/blob/0.24.0/p11-kit/rpc-client.c#L467
-	resp := &rpc.Body{Call: rpc.CallGetSlotInfo}
-	resp.AppendString(info.Description, 64)
-	resp.AppendString(info.ManufacturerID, 32)
-	resp.AppendUlong(flags)
-	resp.AppendVersion(info.HardwareVersion.Major, info.HardwareVersion.Minor)
-	resp.AppendVersion(info.FirmwareVersion.Major, info.FirmwareVersion.Minor)
+	resp := newResponse(req)
+	resp.writeString(info.Description, 64)
+	resp.writeString(info.ManufacturerID, 32)
+	resp.writeUlong(flags)
+	resp.writeVersion(info.HardwareVersion)
+	resp.writeVersion(info.FirmwareVersion)
 	return resp, nil
 }
 
-func (s *Server) handleGetSlotList(req *rpc.Body) (*rpc.Body, error) {
+func (s *Server) handleGetSlotList(req *body) (*body, error) {
 	// https://github.com/p11-glue/p11-kit/blob/0.24.0/p11-kit/rpc-client.c#L875
+	var (
+		tokenPresent byte
+		n            uint32
+	)
+	req.readByte(&tokenPresent)
+	req.readUlongBuffer(&n)
+	if err := req.err(); err != nil {
+		return nil, err
+	}
 
-	tokenPresent, err := req.Byte()
-	if err != nil {
-		return nil, fmt.Errorf("reading token present byte: %v", err)
-	}
-	n, err := req.Buffer()
-	if err != nil {
-		return nil, fmt.Errorf("reading slot list: %v", err)
-	}
-	if err := req.Close(); err != nil {
-		return nil, fmt.Errorf("processing response: %v", err)
-	}
 	if s.GetSlotList == nil {
 		return nil, ErrFunctionNotSupported
 	}
@@ -449,9 +440,10 @@ func (s *Server) handleGetSlotList(req *rpc.Body) (*rpc.Body, error) {
 	if err != nil {
 		return nil, err
 	}
-	resp := &rpc.Body{Call: rpc.CallGetSlotList}
+
+	resp := newResponse(req)
 	if n == 0 {
-		resp.AppendUlongsLength(len(list))
+		resp.writeUlongArray(nil, uint32(len(list)))
 	} else if int(n) < len(list) {
 		return nil, ErrBufferTooSmall
 	} else {
@@ -459,22 +451,17 @@ func (s *Server) handleGetSlotList(req *rpc.Body) (*rpc.Body, error) {
 		for i, id := range list {
 			sli[i] = uint64(id)
 		}
-		resp.AppendUlongs(sli)
+		resp.writeUlongArray(sli, 0)
 	}
 	return resp, nil
 }
 
-func (s *Server) handleOpenSession(req *rpc.Body) (*rpc.Body, error) {
+func (s *Server) handleOpenSession(req *body) (*body, error) {
 	// https://github.com/p11-glue/p11-kit/blob/0.24.0/p11-kit/rpc-client.c#L980
-	slotID, err := req.Ulong()
-	if err != nil {
-		return nil, fmt.Errorf("decode slot id: %v", err)
-	}
-	flags, err := req.Ulong()
-	if err != nil {
-		return nil, fmt.Errorf("decode flags: %v", err)
-	}
-	if err := req.Close(); err != nil {
+	var slotID, flags uint64
+	req.readUlong(&slotID)
+	req.readUlong(&flags)
+	if err := req.err(); err != nil {
 		return nil, err
 	}
 
@@ -486,29 +473,26 @@ func (s *Server) handleOpenSession(req *rpc.Body) (*rpc.Body, error) {
 		return nil, err
 	}
 
-	resp := &rpc.Body{Call: rpc.CallOpenSession}
-	resp.AppendUlong(uint64(sessionID))
+	resp := newResponse(req)
+	resp.writeUlong(uint64(sessionID))
 	return resp, nil
 }
 
-func (s *Server) handleCloseSession(req *rpc.Body) (*rpc.Body, error) {
+func (s *Server) handleCloseSession(req *body) (*body, error) {
 	// https://github.com/p11-glue/p11-kit/blob/0.24.0/p11-kit/rpc-client.c#L998
-	id, err := req.Ulong()
-	if err != nil {
-		return nil, fmt.Errorf("decode session id: %v", err)
-	}
-	if err := req.Close(); err != nil {
+	var id uint64
+	req.readUlong(&id)
+	if err := req.err(); err != nil {
 		return nil, err
 	}
+
 	if s.CloseSession == nil {
 		return nil, ErrFunctionNotSupported
 	}
 	if err := s.CloseSession(SessionID(id)); err != nil {
 		return nil, err
 	}
-
-	resp := &rpc.Body{Call: rpc.CallCloseSession}
-	return resp, nil
+	return newResponse(req), nil
 }
 
 func writeByte(w io.Writer, b byte) error {
