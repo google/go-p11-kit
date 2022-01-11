@@ -183,7 +183,14 @@ func newBuffer(b []byte) buffer {
 
 // https://github.com/p11-glue/p11-kit/blob/0.24.0/p11-kit/rpc-message.c#L1039
 func (b *buffer) addAttribute(a attribute) {
-	panic("TODO")
+	b.addUint32(uint32(a.typ))
+	if a.value == nil {
+		b.addByte(0)
+		return
+	}
+	b.addByte(1)
+	b.addUint32(uint32(len(a.value)))
+	b.b = append(b.b, a.value...)
 }
 
 func (b *buffer) addByteArray(a []byte) {
@@ -237,6 +244,69 @@ func (b *buffer) addDate(t time.Time) {
 	} else {
 		b.b = append(b.b, '0', '0')
 	}
+}
+
+// https://github.com/p11-glue/p11-kit/blob/0.24.0/p11-kit/rpc-message.c#L1232
+func (b *buffer) attribute(a *attribute) bool {
+	var (
+		typ      uint32
+		validity byte
+	)
+	if !b.uint32(&typ) || !b.byte(&validity) {
+		return false
+	}
+	if validity == 0 {
+		*a = attribute{typ: attributeType(typ)}
+		return true
+	}
+
+	var length uint32
+	if !b.uint32(&length) {
+		return false
+	}
+
+	attr := attribute{typ: attributeType(typ)}
+	switch attr.typ.valueType() {
+	case attributeTypeByte:
+		// https://github.com/p11-glue/p11-kit/blob/0.24.0/p11-kit/rpc-message.c#L890
+		// https://github.com/p11-glue/p11-kit/blob/0.24.0/p11-kit/rpc-message.c#L1075
+		var n byte
+		if !b.byte(&n) {
+			return false
+		}
+		attr.b = &n
+	case attributeTypeUlong:
+		// https://github.com/p11-glue/p11-kit/blob/0.24.0/p11-kit/rpc-message.c#L891
+		// https://github.com/p11-glue/p11-kit/blob/0.24.0/p11-kit/rpc-message.c#L1097
+		var n uint64
+		if !b.uint64(&n) {
+			return false
+		}
+		attr.n = &n
+	case attributeTypeMechanismArray:
+		// TODO(ericchiang): implement
+		return false
+	case attributeTypeDate:
+		// https://github.com/p11-glue/p11-kit/blob/0.24.0/p11-kit/rpc-message.c#L894
+		// https://github.com/p11-glue/p11-kit/blob/0.24.0/p11-kit/rpc-message.c#L1182
+		var t time.Time
+		if !b.date(&t) {
+			return false
+		}
+		attr.d = &t
+	case attributeTypeByteArray:
+		// https://github.com/p11-glue/p11-kit/blob/0.24.0/p11-kit/rpc-message.c#L895
+		// https://github.com/p11-glue/p11-kit/blob/0.24.0/p11-kit/rpc-message.c#L1211
+		var arr []byte
+		if !b.byteArray(&arr) {
+			return false
+		}
+		attr.a = arr
+	default:
+		return false
+	}
+	*a = attr
+	return true
 }
 
 func (b *buffer) byte(by *byte) bool {
@@ -314,13 +384,14 @@ func newResponse(req *body) *body {
 }
 
 const (
-	sigByte        = "y"
-	sigByteArray   = "ay"
-	sigUlong       = "u"
-	sigUlongArray  = "au"
-	sigUlongBuffer = "fu"
-	sigString      = "s"
-	sigVersion     = "v"
+	sigAttributeArray = "aA"
+	sigByte           = "y"
+	sigByteArray      = "ay"
+	sigUlong          = "u"
+	sigUlongArray     = "au"
+	sigUlongBuffer    = "fu"
+	sigString         = "s"
+	sigVersion        = "v"
 )
 
 func (b *body) err() error {
@@ -364,6 +435,15 @@ func (b *body) decode(sig string, fn func() bool) {
 	}
 	b.error = io.ErrUnexpectedEOF
 	return
+}
+
+// https://github.com/p11-glue/p11-kit/blob/0.24.0/p11-kit/rpc-message.c#L278
+func (b *body) writeAttributeArray(a []attribute) {
+	b.writeSig(sigAttributeArray)
+	b.buffer.addUint32(uint32(len(a)))
+	for _, attr := range a {
+		b.buffer.addAttribute(attr)
+	}
 }
 
 // https://github.com/p11-glue/p11-kit/blob/0.24.0/p11-kit/rpc-message.c#L313
@@ -429,6 +509,29 @@ func (b *body) writeVersion(v Version) {
 func (b *body) readByte(c *byte) {
 	b.decode(sigByte, func() bool {
 		return b.buffer.byte(c)
+	})
+}
+
+// https://github.com/p11-glue/p11-kit/blob/0.24.0/p11-kit/rpc-client.c#L203
+func (b *body) readAttributeArray(a *[]attribute) {
+	b.decode(sigAttributeArray, func() bool {
+		var length uint32
+		if !b.buffer.uint32(&length) {
+			return false
+		}
+		var (
+			arr []attribute
+			i   uint32
+		)
+		for i = 0; i < length; i++ {
+			var attr attribute
+			if !b.buffer.attribute(&attr) {
+				return false
+			}
+			arr = append(arr, attr)
+		}
+		*a = arr
+		return true
 	})
 }
 
