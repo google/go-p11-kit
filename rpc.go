@@ -4,7 +4,9 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
+	"time"
 )
 
 type call uint32
@@ -179,6 +181,11 @@ func newBuffer(b []byte) buffer {
 	return buffer{b: b}
 }
 
+// https://github.com/p11-glue/p11-kit/blob/0.24.0/p11-kit/rpc-message.c#L1039
+func (b *buffer) addAttribute(a attribute) {
+	panic("TODO")
+}
+
 func (b *buffer) addByteArray(a []byte) {
 	// https://github.com/p11-glue/p11-kit/blob/0.24.0/p11-kit/rpc-message.c#L730
 	b.addUint32(uint32(len(a)))
@@ -199,6 +206,37 @@ func (b *buffer) addUint64(n uint64) {
 
 func (b *buffer) addByte(by byte) {
 	b.b = append(b.b, by)
+}
+
+// https://github.com/p11-glue/p11-kit/blob/0.24.0/p11-kit/rpc-message.c#L998
+func (b *buffer) addDate(t time.Time) {
+	year := uint64(t.Year())
+	month := uint64(t.Month())
+	day := uint64(t.Day())
+
+	if 1000 <= year && year <= 9999 {
+		b.b = strconv.AppendUint(b.b, year, 10)
+	} else {
+		b.b = append(b.b, '0', '0', '0', '0')
+	}
+
+	if 0 <= month && month <= 9 {
+		b.b = append(b.b, '0')
+		b.b = strconv.AppendUint(b.b, month, 10)
+	} else if 10 <= month && month <= 99 {
+		b.b = strconv.AppendUint(b.b, month, 10)
+	} else {
+		b.b = append(b.b, '0', '0')
+	}
+
+	if 0 <= day && day <= 9 {
+		b.b = append(b.b, '0')
+		b.b = strconv.AppendUint(b.b, day, 10)
+	} else if 10 <= day && day <= 99 {
+		b.b = strconv.AppendUint(b.b, day, 10)
+	} else {
+		b.b = append(b.b, '0', '0')
+	}
 }
 
 func (b *buffer) byte(by *byte) bool {
@@ -240,6 +278,27 @@ func (b *buffer) byteArray(a *[]byte) bool {
 	}
 	*a = b.b[:n]
 	b.b = b.b[n:]
+	return true
+}
+
+func (b *buffer) date(t *time.Time) bool {
+	if len(b.b) < 8 {
+		return false
+	}
+	year, err := strconv.ParseUint(string(b.b[:4]), 10, 64)
+	if err != nil {
+		return false
+	}
+	month, err := strconv.ParseUint(string(b.b[4:6]), 10, 64)
+	if err != nil {
+		return false
+	}
+	day, err := strconv.ParseUint(string(b.b[6:8]), 10, 64)
+	if err != nil {
+		return false
+	}
+	*t = time.Date(int(year), time.Month(month), int(day), 0, 0, 0, 0, time.UTC)
+	b.b = b.b[8:]
 	return true
 }
 

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"reflect"
 	"testing"
+	"time"
 )
 
 func TestBuffer(t *testing.T) {
@@ -61,6 +62,21 @@ func TestBuffer(t *testing.T) {
 			},
 			[]interface{}{[]byte{0x12, 0x34}},
 		},
+		{
+			"date",
+			[]byte("12341230" + "20210101"),
+			func(b *buffer) []interface{} {
+				var t1, t2 time.Time
+				if b.date(&t1) && b.date(&t2) {
+					return []interface{}{t1, t2}
+				}
+				return nil
+			},
+			[]interface{}{
+				time.Date(1234, 12, 30, 0, 0, 0, 0, time.UTC),
+				time.Date(2021, 1, 1, 0, 0, 0, 0, time.UTC),
+			},
+		},
 	}
 
 	for _, test := range tests {
@@ -111,6 +127,16 @@ func TestBufferAdd(t *testing.T) {
 				b.addByteArray([]byte{0x12, 0x34})
 			},
 			[]byte{0x00, 0x00, 0x00, 0x02, 0x12, 0x34},
+		},
+		{
+			"addDate",
+			func(b *buffer) {
+				t := time.Date(1234, 12, 30, 0, 0, 0, 0, time.UTC)
+				b.addDate(t)
+				t = time.Date(2021, 1, 1, 0, 0, 0, 0, time.UTC)
+				b.addDate(t)
+			},
+			[]byte("12341230" + "20210101"),
 		},
 	}
 
