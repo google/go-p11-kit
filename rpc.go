@@ -7,6 +7,155 @@ import (
 	"strings"
 )
 
+type call uint32
+
+func (c call) String() string {
+	if s, ok := callStrings[c]; ok {
+		return s
+	}
+	return fmt.Sprintf("unknown call(%d)", uint32(c))
+}
+
+var callStrings = map[call]string{
+	callInitialize:          "C_Initialize",
+	callFinalize:            "C_Finalize",
+	callGetInfo:             "C_GetInfo",
+	callGetSlotList:         "C_GetSlotList",
+	callGetSlotInfo:         "C_GetSlotInfo",
+	callGetTokenInfo:        "C_GetTokenInfo",
+	callGetMechanismList:    "C_GetMechanismList",
+	callGetMechanismInfo:    "C_GetMechanismInfo",
+	callInitToken:           "C_InitToken",
+	callOpenSession:         "C_OpenSession",
+	callCloseSession:        "C_CloseSession",
+	callCloseAllSessions:    "C_CloseAllSessions",
+	callGetSessionInfo:      "C_GetSessionInfo",
+	callInitPIN:             "C_InitPIN",
+	callSetPIN:              "C_SetPIN",
+	callGetOperationState:   "C_GetOperationState",
+	callSetOperationState:   "C_SetOperationState",
+	callLogin:               "C_Login",
+	callLogout:              "C_Logout",
+	callCreateObject:        "C_CreateObject",
+	callCopyObject:          "C_CopyObject",
+	callDestroyObject:       "C_DestroyObject",
+	callGetObjectSize:       "C_GetObjectSize",
+	callGetAttributeValue:   "C_GetAttributeValue",
+	callSetAttributeValue:   "C_SetAttributeValue",
+	callFindObjectsInit:     "C_FindObjectsInit",
+	callFindObjects:         "C_FindObjects",
+	callFindObjectsFinal:    "C_FindObjectsFinal",
+	callEncryptInit:         "C_EncryptInit",
+	callEncrypt:             "C_Encrypt",
+	callEncryptUpdate:       "C_EncryptUpdate",
+	callEncryptFinal:        "C_EncryptFinal",
+	callDecryptInit:         "C_DecryptInit",
+	callDecrypt:             "C_Decrypt",
+	callDecryptUpdate:       "C_DecryptUpdate",
+	callDecryptFinal:        "C_DecryptFinal",
+	callDigestInit:          "C_DigestInit",
+	callDigest:              "C_Digest",
+	callDigestUpdate:        "C_DigestUpdate",
+	callDigestKey:           "C_DigestKey",
+	callDigestFinal:         "C_DigestFinal",
+	callSignInit:            "C_SignInit",
+	callSign:                "C_Sign",
+	callSignUpdate:          "C_SignUpdate",
+	callSignFinal:           "C_SignFinal",
+	callSignRecoverInit:     "C_SignRecoverInit",
+	callSignRecover:         "C_SignRecover",
+	callVerifyInit:          "C_VerifyInit",
+	callVerify:              "C_Verify",
+	callVerifyUpdate:        "C_VerifyUpdate",
+	callVerifyFinal:         "C_VerifyFinal",
+	callVerifyRecoverInit:   "C_VerifyRecoverInit",
+	callVerifyRecover:       "C_VerifyRecover",
+	callDigestEncryptUpdate: "C_DigestEncryptUpdate",
+	callDecryptDigestUpdate: "C_DecryptDigestUpdate",
+	callSignEncryptUpdate:   "C_SignEncryptUpdate",
+	callDecryptVerifyUpdate: "C_DecryptVerifyUpdate",
+	callGenerateKey:         "C_GenerateKey",
+	callGenerateKeyPair:     "C_GenerateKeyPair",
+	callWrapKey:             "C_WrapKey",
+	callUnwrapKey:           "C_UnwrapKey",
+	callDeriveKey:           "C_DeriveKey",
+	callSeedRandom:          "C_SeedRandom",
+	callGenerateRandom:      "C_GenerateRandom",
+	callWaitForSlotEvent:    "C_WaitForSlotEvent",
+}
+
+// call values supported by this package.
+//
+// See https://github.com/p11-glue/p11-kit/blob/0.24.0/p11-kit/rpc-message.h#L46
+const (
+	callError               call = 0
+	callInitialize               = 1
+	callFinalize                 = 2
+	callGetInfo                  = 3
+	callGetSlotList              = 4
+	callGetSlotInfo              = 5
+	callGetTokenInfo             = 6
+	callGetMechanismList         = 7
+	callGetMechanismInfo         = 8
+	callInitToken                = 9
+	callOpenSession              = 10
+	callCloseSession             = 11
+	callCloseAllSessions         = 12
+	callGetSessionInfo           = 13
+	callInitPIN                  = 14
+	callSetPIN                   = 15
+	callGetOperationState        = 16
+	callSetOperationState        = 17
+	callLogin                    = 18
+	callLogout                   = 19
+	callCreateObject             = 20
+	callCopyObject               = 21
+	callDestroyObject            = 22
+	callGetObjectSize            = 23
+	callGetAttributeValue        = 24
+	callSetAttributeValue        = 25
+	callFindObjectsInit          = 26
+	callFindObjects              = 27
+	callFindObjectsFinal         = 28
+	callEncryptInit              = 29
+	callEncrypt                  = 30
+	callEncryptUpdate            = 31
+	callEncryptFinal             = 32
+	callDecryptInit              = 33
+	callDecrypt                  = 34
+	callDecryptUpdate            = 35
+	callDecryptFinal             = 36
+	callDigestInit               = 37
+	callDigest                   = 38
+	callDigestUpdate             = 39
+	callDigestKey                = 40
+	callDigestFinal              = 41
+	callSignInit                 = 42
+	callSign                     = 43
+	callSignUpdate               = 44
+	callSignFinal                = 45
+	callSignRecoverInit          = 46
+	callSignRecover              = 47
+	callVerifyInit               = 48
+	callVerify                   = 49
+	callVerifyUpdate             = 50
+	callVerifyFinal              = 51
+	callVerifyRecoverInit        = 52
+	callVerifyRecover            = 53
+	callDigestEncryptUpdate      = 54
+	callDecryptDigestUpdate      = 55
+	callSignEncryptUpdate        = 56
+	callDecryptVerifyUpdate      = 57
+	callGenerateKey              = 58
+	callGenerateKeyPair          = 59
+	callWrapKey                  = 60
+	callUnwrapKey                = 61
+	callDeriveKey                = 62
+	callSeedRandom               = 63
+	callGenerateRandom           = 64
+	callWaitForSlotEvent         = 65
+)
+
 var binaryEncoding = binary.BigEndian
 
 type buffer struct {
@@ -95,7 +244,7 @@ func (b *buffer) byteArray(a *[]byte) bool {
 }
 
 type body struct {
-	call      uint32
+	call      call
 	signature string
 	buffer    buffer
 	error     error
@@ -305,13 +454,13 @@ func readRequest(r io.Reader) (uint32, *body, error) {
 
 	buff := newBuffer(b[optsLen:])
 	var (
-		call     uint32
+		callID   uint32
 		sigBytes []byte
 	)
-	if !buff.uint32(&call) || !buff.byteArray(&sigBytes) {
+	if !buff.uint32(&callID) || !buff.byteArray(&sigBytes) {
 		return 0, nil, fmt.Errorf("malformed request body")
 	}
-	return h.ID, &body{call: call, signature: string(sigBytes), buffer: buff}, nil
+	return h.ID, &body{call: call(callID), signature: string(sigBytes), buffer: buff}, nil
 }
 
 func writeResponse(w io.Writer, messageID uint32, body *body) error {
@@ -322,7 +471,7 @@ func writeResponse(w io.Writer, messageID uint32, body *body) error {
 	b.addUint32(0) // options lengh is zero.
 	b.addUint32(uint32(bodyLen))
 
-	b.addUint32(body.call)
+	b.addUint32(uint32(body.call))
 	b.addByteArray([]byte(body.signature))
 	b.Write(body.buffer.bytes())
 	_, err := w.Write(b.bytes())

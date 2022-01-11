@@ -7,8 +7,6 @@ import (
 	"io"
 	"math"
 	"time"
-
-	"github.com/google/p11kit/internal/rpc"
 )
 
 // Error represents a PKCS #11 return code.
@@ -250,18 +248,18 @@ func (s *Server) Handle(rw io.ReadWriter) error {
 	}
 
 	done := false
-	handlers := map[rpc.Call]func(*body) (*body, error){
-		rpc.CallFinalize: func(req *body) (*body, error) {
+	handlers := map[call]func(*body) (*body, error){
+		callFinalize: func(req *body) (*body, error) {
 			done = true
 			return req, nil
 		},
-		rpc.CallInitialize:   s.handleInitialize,
-		rpc.CallGetInfo:      s.handleGetInfo,
-		rpc.CallGetSlotList:  s.handleGetSlotList,
-		rpc.CallGetTokenInfo: s.handleGetTokenInfo,
-		rpc.CallGetSlotInfo:  s.handleGetSlotInfo,
-		rpc.CallOpenSession:  s.handleOpenSession,
-		rpc.CallCloseSession: s.handleCloseSession,
+		callInitialize:   s.handleInitialize,
+		callGetInfo:      s.handleGetInfo,
+		callGetSlotList:  s.handleGetSlotList,
+		callGetTokenInfo: s.handleGetTokenInfo,
+		callGetSlotInfo:  s.handleGetSlotInfo,
+		callOpenSession:  s.handleOpenSession,
+		callCloseSession: s.handleCloseSession,
 	}
 
 	for !done {
@@ -270,7 +268,7 @@ func (s *Server) Handle(rw io.ReadWriter) error {
 			return fmt.Errorf("read request: %v", err)
 		}
 		var resp *body
-		if h, ok := handlers[rpc.Call(req.call)]; ok {
+		if h, ok := handlers[req.call]; ok {
 			resp, err = h(req)
 		} else {
 			err = ErrFunctionNotSupported
@@ -282,7 +280,7 @@ func (s *Server) Handle(rw io.ReadWriter) error {
 			}
 
 			// https://github.com/p11-glue/p11-kit/blob/0.24.0/p11-kit/rpc-client.c#L142-L143
-			resp = &body{call: uint32(rpc.CallError)}
+			resp = &body{call: callError}
 			resp.writeUlong(uint64(cerr))
 		}
 		if err := writeResponse(rw, callID, resp); err != nil {
