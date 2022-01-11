@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"math"
-	"time"
 )
 
 // Error represents a PKCS #11 return code.
@@ -120,15 +119,8 @@ const (
 	ErrVendorDefined                 Error = 0x80000000
 )
 
-// Special PKCS #11 values that can be used instead of certain flags.
-const (
-	EffectivelyInfinite    = 0x0
-	UnavailableInformation = math.MaxUint64
-)
-
-// InitializeArgs holds CK_C_INITIALIZE_ARGS fields.
-type InitializeArgs struct {
-}
+// Version of the spec this package aims to implement.
+var cryptokiVersion = Version{Major: 0x02, Minor: 0x28}
 
 // Version holds a major and minor version number, used in various fields in
 // the PKCS #11 interface.
@@ -157,80 +149,27 @@ type SessionID uint64
 // SlotID corresponds to CK_SLOT_ID.
 type SlotID uint64
 
-const (
-	slotInfoFlagTokenPresent    = 0x00000001
-	slotInfoFlagRemovableDevice = 0x00000002
-	slotInfoFlagHWSlot          = 0x00000004
-)
+// Slot holds information about the slot and token.
+type Slot struct {
+	ID uint64
 
-// SlotInfo holds information about a slot, a grouping of objects such as
-// certificates, public keys, and private keys.
-//
-//// This corresponds to CK_SLOT_INFO.
-type SlotInfo struct {
-	Description    string // Limit of 64 bytes
-	ManufacturerID string // Limit of 32 bytes
-
-	// TODO(ericchiang): encode these values in flags.
-
-	TokenPresent    bool
-	RemovableDevice bool
-	HardwareSlot    bool
+	Description  string
+	Label        string
+	Manufacturer string
+	Model        string
+	Serial       string
 
 	HardwareVersion Version
 	FirmwareVersion Version
-}
-
-// TokenInfo holds information about a token, the entity that "backs" the slot.
-//
-// Practically, there's very little difference between a token and a slot, and
-// treating these as a single component is valid.
-//
-// This corresponds to CK_TOKEN_INFO.
-type TokenInfo struct {
-	Label          string // Limit of 32 bytes
-	ManufacturerID string // Limit of 32 bytes
-	Model          string // Limit of 16 bytes
-	SerialNumber   string // Limit of 16 bytes
-
-	Flags uint64
-
-	// TODO(ericchiang): Default counts to reasonable values.
-
-	MaxSessionCount   uint64
-	SessionCount      uint64
-	MaxRWSessionCount uint64
-	RWSessionCount    uint64
-
-	MaxPINLen uint64
-	MinPINLen uint64
-
-	TotalPublicMemory  uint64
-	FreePublicMemory   uint64
-	TotalPrivateMemory uint64
-	FreePrivateMemory  uint64
-
-	HardwareVersion Version
-	FirmwareVersion Version
-
-	// TODO(ericchiang): Default to time.Now().
-	Time time.Time
 }
 
 // Server implements a server for the p11-kit PRC protocol.
 type Server struct {
-	// General purpose APIs.
-	//
-	// http://docs.oasis-open.org/pkcs11/pkcs11-base/v2.40/os/pkcs11-base-v2.40-os.html#_Toc416959740
-	Initialize func(args *InitializeArgs) error
-	GetInfo    func() (*Info, error)
+	Manufacturer   string
+	Library        string
+	LibraryVersion Version
 
-	// Slot and token management APIs.
-	//
-	// http://docs.oasis-open.org/pkcs11/pkcs11-base/v2.40/os/pkcs11-base-v2.40-os.html#_Toc416959741
-	GetSlotList  func(tokenPresnt bool) ([]SlotID, error)
-	GetSlotInfo  func(id SlotID) (*SlotInfo, error)
-	GetTokenInfo func(id SlotID) (*TokenInfo, error)
+	Slots []Slot
 
 	OpenSession  func(id SlotID, flags uint64) (SessionID, error)
 	CloseSession func(id SessionID) error
@@ -309,12 +248,6 @@ func (s *Server) handleInitialize(req *body) (*body, error) {
 	if string(handshake) != handshakeMessage {
 		return nil, fmt.Errorf("client sent unexpected handshake message: %s", handshake)
 	}
-	if s.Initialize == nil {
-		return nil, ErrFunctionNotSupported
-	}
-	if err := s.Initialize(&InitializeArgs{}); err != nil {
-		return nil, fmt.Errorf("initializing module: %w", err)
-	}
 	return newResponse(req), nil
 }
 
@@ -322,19 +255,13 @@ func (s *Server) handleGetInfo(req *body) (*body, error) {
 	if err := req.err(); err != nil {
 		return nil, err
 	}
-	if s.GetInfo == nil {
-		return nil, ErrFunctionNotSupported
-	}
-	info, err := s.GetInfo()
-	if err != nil {
-		return nil, fmt.Errorf("get module info: %w", err)
-	}
+
 	resp := newResponse(req)
-	resp.writeVersion(info.CryptokiVersion)
-	resp.writeString(info.Manufacturer, 32)
+	resp.writeVersion(cryptokiVersion)
+	resp.writeString(s.Manufacturer, 32)
 	resp.writeUlong(0) // Flags is always zero.
-	resp.writeString(info.Library, 32)
-	resp.writeVersion(info.LibraryVersion)
+	resp.writeString(s.Library, 32)
+	resp.writeVersion(s.LibraryVersion)
 	return resp, nil
 }
 
@@ -345,42 +272,62 @@ func (s *Server) handleGetTokenInfo(req *body) (*body, error) {
 	if err := req.err(); err != nil {
 		return nil, err
 	}
-	if s.GetTokenInfo == nil {
-		return nil, ErrFunctionNotSupported
-	}
-	info, err := s.GetTokenInfo(SlotID(slotID))
+
+	slot, err := s.slot(slotID)
 	if err != nil {
 		return nil, err
 	}
 
+	// https://docs.oasis-open.org/pkcs11/pkcs11-base/v2.40/os/pkcs11-base-v2.40-os.html#_Toc323024051
+	var flags uint64
+	flags |= 0x00000002 // CKF_WRITE_PROTECTED
+	flags |= 0x00000400 // CKF_TOKEN_INITIALIZED
+
+	const (
+		effectivelyInfinite    = 0x0
+		unavailableInformation = math.MaxUint64
+	)
+
 	resp := newResponse(req)
 	// https://github.com/p11-glue/p11-kit/blob/0.24.0/p11-kit/rpc-client.c#L484
-	resp.writeString(info.Label, 32)
-	resp.writeString(info.ManufacturerID, 32)
+	resp.writeString(slot.Label, 32)
+	resp.writeString(slot.Manufacturer, 32)
 
-	resp.writeString(info.Model, 16)
-	resp.writeString(info.SerialNumber, 16)
+	resp.writeString(slot.Model, 16)
+	resp.writeString(slot.Serial, 16)
 
-	resp.writeUlong(info.Flags)
+	resp.writeUlong(flags)
 
-	resp.writeUlong(info.MaxSessionCount)
-	resp.writeUlong(info.SessionCount)
-	resp.writeUlong(info.MaxRWSessionCount)
-	resp.writeUlong(info.RWSessionCount)
+	resp.writeUlong(effectivelyInfinite)
+	resp.writeUlong(unavailableInformation)
+	resp.writeUlong(effectivelyInfinite)
+	resp.writeUlong(unavailableInformation)
 
-	resp.writeUlong(info.MaxPINLen)
-	resp.writeUlong(info.MinPINLen)
+	// Zero values for PIN. We don't actually use these.
+	resp.writeUlong(0)
+	resp.writeUlong(0)
 
-	resp.writeUlong(info.TotalPublicMemory)
-	resp.writeUlong(info.FreePublicMemory)
-	resp.writeUlong(info.TotalPrivateMemory)
-	resp.writeUlong(info.FreePrivateMemory)
+	resp.writeUlong(unavailableInformation)
+	resp.writeUlong(unavailableInformation)
+	resp.writeUlong(unavailableInformation)
+	resp.writeUlong(unavailableInformation)
 
-	resp.writeVersion(info.HardwareVersion)
-	resp.writeVersion(info.FirmwareVersion)
+	resp.writeVersion(slot.HardwareVersion)
+	resp.writeVersion(slot.FirmwareVersion)
 
+	// TODO(ericchiang): Include time.
 	resp.writeString("", 16)
 	return resp, nil
+}
+
+func (s *Server) slot(id uint64) (Slot, error) {
+	for _, slot := range s.Slots {
+		if slot.ID == id {
+			return slot, nil
+		}
+	}
+
+	return Slot{}, ErrSlotIDInvalid
 }
 
 func (s *Server) handleGetSlotInfo(req *body) (*body, error) {
@@ -389,33 +336,24 @@ func (s *Server) handleGetSlotInfo(req *body) (*body, error) {
 	if err := req.err(); err != nil {
 		return nil, err
 	}
-	if s.GetSlotInfo == nil {
-		return nil, ErrFunctionNotSupported
-	}
-	info, err := s.GetSlotInfo(SlotID(slotID))
+
+	slot, err := s.slot(slotID)
 	if err != nil {
 		return nil, err
 	}
 
 	// http://docs.oasis-open.org/pkcs11/pkcs11-base/v2.40/os/pkcs11-base-v2.40-os.html#_Toc416959687
 	var flags uint64
-	if info.TokenPresent {
-		flags |= 0x01
-	}
-	if info.RemovableDevice {
-		flags |= 0x02
-	}
-	if info.HardwareSlot {
-		flags |= 0x04
-	}
+	flags |= 0x01 // CKF_TOKEN_PRESENT
+	flags |= 0x04 // CKF_HW_SLOT
 
 	// https://github.com/p11-glue/p11-kit/blob/0.24.0/p11-kit/rpc-client.c#L467
 	resp := newResponse(req)
-	resp.writeString(info.Description, 64)
-	resp.writeString(info.ManufacturerID, 32)
+	resp.writeString(slot.Description, 64)
+	resp.writeString(slot.Manufacturer, 32)
 	resp.writeUlong(flags)
-	resp.writeVersion(info.HardwareVersion)
-	resp.writeVersion(info.FirmwareVersion)
+	resp.writeVersion(slot.HardwareVersion)
+	resp.writeVersion(slot.FirmwareVersion)
 	return resp, nil
 }
 
@@ -431,23 +369,15 @@ func (s *Server) handleGetSlotList(req *body) (*body, error) {
 		return nil, err
 	}
 
-	if s.GetSlotList == nil {
-		return nil, ErrFunctionNotSupported
-	}
-	list, err := s.GetSlotList(tokenPresent != 0)
-	if err != nil {
-		return nil, err
-	}
-
 	resp := newResponse(req)
 	if n == 0 {
-		resp.writeUlongArray(nil, uint32(len(list)))
-	} else if int(n) < len(list) {
+		resp.writeUlongArray(nil, uint32(len(s.Slots)))
+	} else if int(n) < len(s.Slots) {
 		return nil, ErrBufferTooSmall
 	} else {
-		sli := make([]uint64, len(list))
-		for i, id := range list {
-			sli[i] = uint64(id)
+		sli := make([]uint64, len(s.Slots))
+		for i, slot := range s.Slots {
+			sli[i] = slot.ID
 		}
 		resp.writeUlongArray(sli, 0)
 	}

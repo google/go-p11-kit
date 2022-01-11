@@ -3,7 +3,6 @@ package p11kit
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"net"
 	"os"
 	"os/exec"
@@ -45,20 +44,42 @@ func newListener(t *testing.T) (net.Listener, string) {
 }
 
 type testServer struct {
-	initialized bool
-
 	sessions map[SessionID]*testSession
 
 	lastSessionID SessionID
 }
 
 func (t *testServer) server() *Server {
+	hwVersion := Version{0x01, 0x01}
+	fwVersion := Version{0x02, 0x02}
 	return &Server{
-		Initialize:   t.initialize,
-		GetInfo:      t.getInfo,
-		GetSlotList:  t.getSlotList,
-		GetSlotInfo:  t.getSlotInfo,
-		GetTokenInfo: t.getTokenInfo,
+		Manufacturer: "test",
+		Library:      "test_lib",
+		LibraryVersion: Version{
+			Major: 0x00,
+			Minor: 0x01,
+		},
+		Slots: []Slot{
+			{
+				ID:              0x01,
+				Label:           "slot-0x01",
+				Manufacturer:    "test_man",
+				Model:           "test_model",
+				Serial:          "serial-0x01",
+				HardwareVersion: hwVersion,
+				FirmwareVersion: fwVersion,
+			},
+			{
+				ID:              0x02,
+				Label:           "slot-0x02",
+				Manufacturer:    "test_man",
+				Model:           "test_model",
+				Serial:          "serial-0x02",
+				HardwareVersion: hwVersion,
+				FirmwareVersion: fwVersion,
+			},
+		},
+
 		OpenSession:  t.openSession,
 		CloseSession: t.closeSession,
 	}
@@ -76,84 +97,6 @@ func (t *testServer) validSlot(id SlotID) error {
 		return ErrSlotIDInvalid
 	}
 }
-
-func (t *testServer) initialize(args *InitializeArgs) error {
-	t.initialized = true
-	return nil
-}
-
-func (t *testServer) getInfo() (*Info, error) {
-	return &Info{
-		CryptokiVersion: Version{
-			Major: 0x02,
-			Minor: 0x28,
-		},
-		Manufacturer: "test",
-		Library:      "test_lib",
-		LibraryVersion: Version{
-			Major: 0x00,
-			Minor: 0x01,
-		},
-	}, nil
-}
-
-func (t *testServer) getSlotList(tokenPresent bool) ([]SlotID, error) {
-	return []SlotID{0x01, 0x02}, nil
-}
-
-func (t *testServer) getSlotInfo(id SlotID) (*SlotInfo, error) {
-	if err := t.validSlot(id); err != nil {
-		return nil, err
-	}
-	return &SlotInfo{
-		Description:     fmt.Sprintf("slot-%d", id),
-		ManufacturerID:  "test",
-		TokenPresent:    true,
-		RemovableDevice: false,
-		HardwareSlot:    false,
-		HardwareVersion: Version{
-			Major: 0x00,
-			Minor: 0x01,
-		},
-		FirmwareVersion: Version{
-			Major: 0x00,
-			Minor: 0x01,
-		},
-	}, nil
-}
-
-func (t *testServer) getTokenInfo(id SlotID) (*TokenInfo, error) {
-	if err := t.validSlot(id); err != nil {
-		return nil, err
-	}
-
-	return &TokenInfo{
-		Label:              fmt.Sprintf("token-%d", id),
-		ManufacturerID:     "test",
-		Model:              "test_mod",
-		SerialNumber:       fmt.Sprintf("%d", id),
-		Flags:              0,
-		MaxSessionCount:    EffectivelyInfinite,
-		SessionCount:       UnavailableInformation,
-		MaxRWSessionCount:  EffectivelyInfinite,
-		RWSessionCount:     UnavailableInformation,
-		MaxPINLen:          10,
-		MinPINLen:          4,
-		TotalPublicMemory:  UnavailableInformation,
-		FreePublicMemory:   UnavailableInformation,
-		TotalPrivateMemory: UnavailableInformation,
-		FreePrivateMemory:  UnavailableInformation,
-		HardwareVersion: Version{
-			Major: 0x00,
-			Minor: 0x01,
-		},
-		FirmwareVersion: Version{
-			Major: 0x00,
-			Minor: 0x01,
-		},
-	}, nil
-}
-
 func (t *testServer) openSession(id SlotID, flags uint64) (SessionID, error) {
 	if err := t.validSlot(id); err != nil {
 		return 0, err
