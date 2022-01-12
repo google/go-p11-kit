@@ -44,6 +44,7 @@ type Slot struct {
 }
 
 type Object struct {
+	ID    uint64
 	Label string
 	// contains filtered or unexported fields
 }

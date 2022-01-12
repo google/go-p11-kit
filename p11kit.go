@@ -177,6 +177,31 @@ type handler struct {
 
 type session struct {
 	slotID uint64
+
+	findMatches []uint64
+}
+
+func (h *handler) newSearch(sessionID uint64, tmpl []Attribute) error {
+	s, err := h.session(sessionID)
+	if err != nil {
+		return err
+	}
+	s.findMatches = []uint64{}
+	return nil
+}
+
+func (h *handler) nextSearch(sessionID uint64, max int) ([]uint64, error) {
+	s, err := h.session(sessionID)
+	if err != nil {
+		return nil, err
+	}
+	m := s.findMatches
+	if max >= len(m) {
+		s.findMatches = nil
+		return m, nil
+	}
+	s.findMatches = m[max:]
+	return m[:max], nil
 }
 
 func (h *handler) newSession(slotID uint64) (uint64, error) {
@@ -200,6 +225,17 @@ func (h *handler) newSession(slotID uint64) (uint64, error) {
 		slotID: slotID,
 	}
 	return nextSessionID, nil
+}
+
+func (h *handler) session(id uint64) (*session, error) {
+	if len(h.sessions) == 0 {
+		return nil, ErrSessionHandleInvalid
+	}
+	s, ok := h.sessions[id]
+	if !ok {
+		return nil, ErrSessionHandleInvalid
+	}
+	return s, nil
 }
 
 func (h *handler) closeSession(id uint64) error {
@@ -233,13 +269,16 @@ func (s *Server) Handle(rw io.ReadWriter) error {
 			done = true
 			return req, nil
 		},
-		callInitialize:   h.handleInitialize,
-		callGetInfo:      h.handleGetInfo,
-		callGetSlotList:  h.handleGetSlotList,
-		callGetTokenInfo: h.handleGetTokenInfo,
-		callGetSlotInfo:  h.handleGetSlotInfo,
-		callOpenSession:  h.handleOpenSession,
-		callCloseSession: h.handleCloseSession,
+		callInitialize:       h.handleInitialize,
+		callGetInfo:          h.handleGetInfo,
+		callGetSlotList:      h.handleGetSlotList,
+		callGetTokenInfo:     h.handleGetTokenInfo,
+		callGetSlotInfo:      h.handleGetSlotInfo,
+		callOpenSession:      h.handleOpenSession,
+		callCloseSession:     h.handleCloseSession,
+		callFindObjectsInit:  h.handleFindObjectsInit,
+		callFindObjects:      h.handleFindObjects,
+		callFindObjectsFinal: h.handleFindObjectsFinal,
 	}
 
 	for !done {
@@ -459,6 +498,51 @@ func (h *handler) handleCloseSession(req *body) (*body, error) {
 		return nil, err
 	}
 	if err := h.closeSession(id); err != nil {
+		return nil, err
+	}
+	return newResponse(req), nil
+}
+
+func (h *handler) handleFindObjectsInit(req *body) (*body, error) {
+	// https://github.com/p11-glue/p11-kit/blob/0.24.0/p11-kit/rpc-client.c#L1215
+	var (
+		sessionID uint64
+		tmpl      []Attribute
+	)
+	req.readUlong(&sessionID)
+	req.readAttributeArray(&tmpl)
+	if err := req.err(); err != nil {
+		return nil, err
+	}
+	if err := h.newSearch(sessionID, tmpl); err != nil {
+		return nil, err
+	}
+	return newResponse(req), nil
+}
+
+func (h *handler) handleFindObjects(req *body) (*body, error) {
+	var (
+		sessionID uint64
+		count     uint32
+	)
+	req.readUlong(&sessionID)
+	req.readUlongBuffer(&count)
+	if err := req.err(); err != nil {
+		return nil, err
+	}
+	objIDs, err := h.nextSearch(sessionID, int(count))
+	if err != nil {
+		return nil, err
+	}
+	resp := newResponse(req)
+	resp.writeUlongArray(objIDs, uint32(len(objIDs)))
+	return resp, nil
+}
+
+func (h *handler) handleFindObjectsFinal(req *body) (*body, error) {
+	var sessionID uint64
+	req.readUlong(&sessionID)
+	if err := req.err(); err != nil {
 		return nil, err
 	}
 	return newResponse(req), nil
