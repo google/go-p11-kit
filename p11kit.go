@@ -143,12 +143,6 @@ type Info struct {
 	// Flags is ignored since "bit flags reserved for future versions.  MUST be zero for this version"
 }
 
-// SessionID corresponds to CK_SESSION_HANDLE.
-type SessionID uint64
-
-// SlotID corresponds to CK_SLOT_ID.
-type SlotID uint64
-
 // Slot holds information about the slot and token.
 type Slot struct {
 	ID uint64
@@ -170,9 +164,54 @@ type Server struct {
 	LibraryVersion Version
 
 	Slots []Slot
+}
 
-	OpenSession  func(id SlotID, flags uint64) (SessionID, error)
-	CloseSession func(id SessionID) error
+// handler holds per-handler data and multable state for a given client.
+type handler struct {
+	s *Server
+
+	lastSessionID uint64
+
+	sessions map[uint64]*session
+}
+
+type session struct {
+	slotID uint64
+}
+
+func (h *handler) newSession(slotID uint64) (uint64, error) {
+	if _, err := h.slot(slotID); err != nil {
+		return 0, err
+	}
+
+	if h.sessions == nil {
+		h.sessions = make(map[uint64]*session)
+	}
+
+	nextSessionID := h.lastSessionID + 1
+	for {
+		if _, ok := h.sessions[nextSessionID]; !ok {
+			break
+		}
+		nextSessionID++
+	}
+	h.lastSessionID = nextSessionID
+	h.sessions[nextSessionID] = &session{
+		slotID: slotID,
+	}
+	return nextSessionID, nil
+}
+
+func (h *handler) closeSession(id uint64) error {
+	if len(h.sessions) == 0 {
+		return ErrSessionHandleInvalid
+	}
+	_, ok := h.sessions[id]
+	delete(h.sessions, id)
+	if !ok {
+		return ErrSessionHandleInvalid
+	}
+	return nil
 }
 
 // Handle begins serving RPC requests. p11-kit sessions are per-connection, not
@@ -186,19 +225,21 @@ func (s *Server) Handle(rw io.ReadWriter) error {
 		return fmt.Errorf("negotiating protocol version: %v", err)
 	}
 
+	h := &handler{s: s}
+
 	done := false
 	handlers := map[call]func(*body) (*body, error){
 		callFinalize: func(req *body) (*body, error) {
 			done = true
 			return req, nil
 		},
-		callInitialize:   s.handleInitialize,
-		callGetInfo:      s.handleGetInfo,
-		callGetSlotList:  s.handleGetSlotList,
-		callGetTokenInfo: s.handleGetTokenInfo,
-		callGetSlotInfo:  s.handleGetSlotInfo,
-		callOpenSession:  s.handleOpenSession,
-		callCloseSession: s.handleCloseSession,
+		callInitialize:   h.handleInitialize,
+		callGetInfo:      h.handleGetInfo,
+		callGetSlotList:  h.handleGetSlotList,
+		callGetTokenInfo: h.handleGetTokenInfo,
+		callGetSlotInfo:  h.handleGetSlotInfo,
+		callOpenSession:  h.handleOpenSession,
+		callCloseSession: h.handleCloseSession,
 	}
 
 	for !done {
@@ -229,7 +270,7 @@ func (s *Server) Handle(rw io.ReadWriter) error {
 	return nil
 }
 
-func (s *Server) handleInitialize(req *body) (*body, error) {
+func (h *handler) handleInitialize(req *body) (*body, error) {
 	// https://github.com/p11-glue/p11-kit/blob/0.24.0/p11-kit/rpc-message.h#L215
 	const handshakeMessage = "PRIVATE-GNOME-KEYRING-PKCS11-PROTOCOL-V-1"
 
@@ -251,21 +292,21 @@ func (s *Server) handleInitialize(req *body) (*body, error) {
 	return newResponse(req), nil
 }
 
-func (s *Server) handleGetInfo(req *body) (*body, error) {
+func (h *handler) handleGetInfo(req *body) (*body, error) {
 	if err := req.err(); err != nil {
 		return nil, err
 	}
 
 	resp := newResponse(req)
 	resp.writeVersion(cryptokiVersion)
-	resp.writeString(s.Manufacturer, 32)
+	resp.writeString(h.s.Manufacturer, 32)
 	resp.writeUlong(0) // Flags is always zero.
-	resp.writeString(s.Library, 32)
-	resp.writeVersion(s.LibraryVersion)
+	resp.writeString(h.s.Library, 32)
+	resp.writeVersion(h.s.LibraryVersion)
 	return resp, nil
 }
 
-func (s *Server) handleGetTokenInfo(req *body) (*body, error) {
+func (h *handler) handleGetTokenInfo(req *body) (*body, error) {
 	// https://github.com/p11-glue/p11-kit/blob/0.24.0/p11-kit/rpc-client.c#L905
 	var slotID uint64
 	req.readUlong(&slotID)
@@ -273,7 +314,7 @@ func (s *Server) handleGetTokenInfo(req *body) (*body, error) {
 		return nil, err
 	}
 
-	slot, err := s.slot(slotID)
+	slot, err := h.slot(slotID)
 	if err != nil {
 		return nil, err
 	}
@@ -320,8 +361,8 @@ func (s *Server) handleGetTokenInfo(req *body) (*body, error) {
 	return resp, nil
 }
 
-func (s *Server) slot(id uint64) (Slot, error) {
-	for _, slot := range s.Slots {
+func (h *handler) slot(id uint64) (Slot, error) {
+	for _, slot := range h.s.Slots {
 		if slot.ID == id {
 			return slot, nil
 		}
@@ -330,14 +371,14 @@ func (s *Server) slot(id uint64) (Slot, error) {
 	return Slot{}, ErrSlotIDInvalid
 }
 
-func (s *Server) handleGetSlotInfo(req *body) (*body, error) {
+func (h *handler) handleGetSlotInfo(req *body) (*body, error) {
 	var slotID uint64
 	req.readUlong(&slotID)
 	if err := req.err(); err != nil {
 		return nil, err
 	}
 
-	slot, err := s.slot(slotID)
+	slot, err := h.slot(slotID)
 	if err != nil {
 		return nil, err
 	}
@@ -357,7 +398,7 @@ func (s *Server) handleGetSlotInfo(req *body) (*body, error) {
 	return resp, nil
 }
 
-func (s *Server) handleGetSlotList(req *body) (*body, error) {
+func (h *handler) handleGetSlotList(req *body) (*body, error) {
 	// https://github.com/p11-glue/p11-kit/blob/0.24.0/p11-kit/rpc-client.c#L875
 	var (
 		tokenPresent byte
@@ -371,12 +412,12 @@ func (s *Server) handleGetSlotList(req *body) (*body, error) {
 
 	resp := newResponse(req)
 	if n == 0 {
-		resp.writeUlongArray(nil, uint32(len(s.Slots)))
-	} else if int(n) < len(s.Slots) {
+		resp.writeUlongArray(nil, uint32(len(h.s.Slots)))
+	} else if int(n) < len(h.s.Slots) {
 		return nil, ErrBufferTooSmall
 	} else {
-		sli := make([]uint64, len(s.Slots))
-		for i, slot := range s.Slots {
+		sli := make([]uint64, len(h.s.Slots))
+		for i, slot := range h.s.Slots {
 			sli[i] = slot.ID
 		}
 		resp.writeUlongArray(sli, 0)
@@ -384,7 +425,7 @@ func (s *Server) handleGetSlotList(req *body) (*body, error) {
 	return resp, nil
 }
 
-func (s *Server) handleOpenSession(req *body) (*body, error) {
+func (h *handler) handleOpenSession(req *body) (*body, error) {
 	// https://github.com/p11-glue/p11-kit/blob/0.24.0/p11-kit/rpc-client.c#L980
 	var slotID, flags uint64
 	req.readUlong(&slotID)
@@ -393,31 +434,31 @@ func (s *Server) handleOpenSession(req *body) (*body, error) {
 		return nil, err
 	}
 
-	if s.OpenSession == nil {
-		return nil, ErrFunctionNotSupported
+	// https://docs.oasis-open.org/pkcs11/pkcs11-base/v2.40/os/pkcs11-base-v2.40-os.html#_Toc72656119
+
+	// Check for CKF_SERIAL_SESSION.
+	if (flags & 0x00000004) == 0 {
+		return nil, ErrSessionParallelNotSupported
 	}
-	sessionID, err := s.OpenSession(SlotID(slotID), flags)
+
+	sessionID, err := h.newSession(slotID)
 	if err != nil {
 		return nil, err
 	}
 
 	resp := newResponse(req)
-	resp.writeUlong(uint64(sessionID))
+	resp.writeUlong(sessionID)
 	return resp, nil
 }
 
-func (s *Server) handleCloseSession(req *body) (*body, error) {
+func (h *handler) handleCloseSession(req *body) (*body, error) {
 	// https://github.com/p11-glue/p11-kit/blob/0.24.0/p11-kit/rpc-client.c#L998
 	var id uint64
 	req.readUlong(&id)
 	if err := req.err(); err != nil {
 		return nil, err
 	}
-
-	if s.CloseSession == nil {
-		return nil, ErrFunctionNotSupported
-	}
-	if err := s.CloseSession(SessionID(id)); err != nil {
+	if err := h.closeSession(id); err != nil {
 		return nil, err
 	}
 	return newResponse(req), nil

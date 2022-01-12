@@ -43,11 +43,7 @@ func newListener(t *testing.T) (net.Listener, string) {
 	return l, socketPath
 }
 
-type testServer struct {
-	sessions map[SessionID]*testSession
-
-	lastSessionID SessionID
-}
+type testServer struct{}
 
 func (t *testServer) server() *Server {
 	hwVersion := Version{0x01, 0x01}
@@ -79,55 +75,7 @@ func (t *testServer) server() *Server {
 				FirmwareVersion: fwVersion,
 			},
 		},
-
-		OpenSession:  t.openSession,
-		CloseSession: t.closeSession,
 	}
-}
-
-type testSession struct {
-	slotID SlotID
-}
-
-func (t *testServer) validSlot(id SlotID) error {
-	switch id {
-	case 0x01, 0x02:
-		return nil
-	default:
-		return ErrSlotIDInvalid
-	}
-}
-func (t *testServer) openSession(id SlotID, flags uint64) (SessionID, error) {
-	if err := t.validSlot(id); err != nil {
-		return 0, err
-	}
-
-	// TODO(ericchiang): check flags here
-
-	if t.sessions == nil {
-		t.sessions = make(map[SessionID]*testSession)
-	}
-	nextSessionID := t.lastSessionID + 1
-	for {
-		if _, ok := t.sessions[nextSessionID]; !ok {
-			break
-		}
-		nextSessionID++
-	}
-	t.lastSessionID = nextSessionID
-	t.sessions[nextSessionID] = &testSession{
-		slotID: id,
-	}
-	return nextSessionID, nil
-}
-
-func (t *testServer) closeSession(id SessionID) error {
-	_, ok := t.sessions[id]
-	delete(t.sessions, id)
-	if !ok {
-		return ErrSessionHandleInvalid
-	}
-	return nil
 }
 
 func TestPKCS11Tool(t *testing.T) {
