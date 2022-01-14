@@ -181,7 +181,7 @@ type session struct {
 	findMatches []uint64
 }
 
-func (h *handler) newSearch(sessionID uint64, tmpl []Attribute) error {
+func (h *handler) newSearch(sessionID uint64, tmpl []attribute) error {
 	s, err := h.session(sessionID)
 	if err != nil {
 		return err
@@ -507,7 +507,7 @@ func (h *handler) handleFindObjectsInit(req *body) (*body, error) {
 	// https://github.com/p11-glue/p11-kit/blob/0.24.0/p11-kit/rpc-client.c#L1215
 	var (
 		sessionID uint64
-		tmpl      []Attribute
+		tmpl      []attribute
 	)
 	req.readUlong(&sessionID)
 	req.readAttributeArray(&tmpl)

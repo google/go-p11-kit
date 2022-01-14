@@ -182,7 +182,7 @@ func newBuffer(b []byte) buffer {
 }
 
 // https://github.com/p11-glue/p11-kit/blob/0.24.0/p11-kit/rpc-message.c#L1039
-func (b *buffer) addAttribute(a Attribute) {
+func (b *buffer) addAttribute(a attribute) {
 	b.addUint32(uint32(a.typ))
 	if a.value == nil {
 		b.addByte(0)
@@ -247,7 +247,7 @@ func (b *buffer) addDate(t time.Time) {
 }
 
 // https://github.com/p11-glue/p11-kit/blob/0.24.0/p11-kit/rpc-message.c#L1232
-func (b *buffer) attribute(a *Attribute) bool {
+func (b *buffer) attribute(a *attribute) bool {
 	var (
 		typ      uint32
 		validity byte
@@ -256,7 +256,7 @@ func (b *buffer) attribute(a *Attribute) bool {
 		return false
 	}
 	if validity == 0 {
-		*a = Attribute{typ: AttributeType(typ)}
+		*a = attribute{typ: attributeType(typ)}
 		return true
 	}
 
@@ -265,7 +265,7 @@ func (b *buffer) attribute(a *Attribute) bool {
 		return false
 	}
 
-	attr := Attribute{typ: AttributeType(typ)}
+	attr := attribute{typ: attributeType(typ)}
 	switch attr.typ.valueType() {
 	case attributeTypeByte:
 		// https://github.com/p11-glue/p11-kit/blob/0.24.0/p11-kit/rpc-message.c#L890
@@ -438,7 +438,7 @@ func (b *body) decode(sig string, fn func() bool) {
 }
 
 // https://github.com/p11-glue/p11-kit/blob/0.24.0/p11-kit/rpc-message.c#L278
-func (b *body) writeAttributeArray(a []Attribute) {
+func (b *body) writeAttributeArray(a []attribute) {
 	b.writeSig(sigAttributeArray)
 	b.buffer.addUint32(uint32(len(a)))
 	for _, attr := range a {
@@ -513,18 +513,18 @@ func (b *body) readByte(c *byte) {
 }
 
 // https://github.com/p11-glue/p11-kit/blob/0.24.0/p11-kit/rpc-client.c#L203
-func (b *body) readAttributeArray(a *[]Attribute) {
+func (b *body) readAttributeArray(a *[]attribute) {
 	b.decode(sigAttributeArray, func() bool {
 		var length uint32
 		if !b.buffer.uint32(&length) {
 			return false
 		}
 		var (
-			arr []Attribute
+			arr []attribute
 			i   uint32
 		)
 		for i = 0; i < length; i++ {
-			var attr Attribute
+			var attr attribute
 			if !b.buffer.attribute(&attr) {
 				return false
 			}
