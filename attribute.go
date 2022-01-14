@@ -1,59 +1,97 @@
 package p11kit
 
 import (
+	"crypto/x509"
 	"fmt"
 	"time"
 )
+
+type Object struct {
+	attributes []attribute
+}
+
+func (o *Object) SetLabel(label string) {
+	o.attributes = append(o.attributes, attribute{
+		typ: attributeLabel, bytes: []byte(label),
+	})
+}
+
+const (
+	// https://github.com/Pkcs11Interop/PKCS11-SPECS/blob/master/v2.20/headers/pkcs11t.h#L427-L433
+	ckcX509 uint64 = 0
+
+	// https://github.com/Pkcs11Interop/PKCS11-SPECS/blob/master/v2.20/headers/pkcs11t.h#L334-L345
+	ckoData        uint64 = 0x00000000
+	ckoCertificate uint64 = 0x00000001
+	ckoPublicKey   uint64 = 0x00000002
+	ckoPrivateKey  uint64 = 0x00000003
+)
+
+func NewX509CertificateObject(cert *x509.Certificate) (Object, error) {
+	// http://docs.oasis-open.org/pkcs11/pkcs11-base/v2.40/os/pkcs11-base-v2.40-os.html#_Toc416959711
+	// http://docs.oasis-open.org/pkcs11/pkcs11-base/v2.40/os/pkcs11-base-v2.40-os.html#_Toc416959712
+	certType := ckcX509
+	objectType := ckoCertificate
+	return Object{
+		attributes: []attribute{
+			{typ: attributeClass, ulong: &objectType},         // CKA_CLASS
+			{typ: attributeCertificateType, ulong: &certType}, // CKA_CERTIFICATE_TYPE
+			{typ: attributeSubject, bytes: cert.RawSubject},   // CKA_SUBJECT
+			{typ: attributeIssuer, bytes: cert.RawIssuer},     // CKA_ISSUER
+			{typ: attributeValue, bytes: cert.Raw},            // CKA_VALUE
+		},
+	}, nil
+}
 
 // attribute represents a PKCS #11 attribute, a typed object with optional value.
 type attribute struct {
 	typ   attributeType
 	value []byte
 
-	b *byte      // byte
-	n *uint64    // ulong
-	m []uint64   // mechanism array
-	d *time.Time // date
-	a []byte     // byte array
+	byte       *byte      // byte
+	ulong      *uint64    // ulong
+	mechanisms []uint64   // mechanism array
+	date       *time.Time // date
+	bytes      []byte     // byte array
 }
 
 // setBytes decodes the value of the attribute into a byte array, returning if
 // the operation was successful.
 func (a attribute) setBytes(b []byte) bool {
-	if a.a == nil {
+	if a.bytes == nil {
 		return false
 	}
-	b = a.a
+	b = a.bytes
 	return true
 }
 
 // setDate decodes the value of the attribute into a CK_DATE value, returning if
 // the operation was successful.
 func (a attribute) setDate(year *int, month *time.Month, day *int) bool {
-	if a.d == nil {
+	if a.date == nil {
 		return false
 	}
-	*year, *month, *day = a.d.Date()
+	*year, *month, *day = a.date.Date()
 	return true
 }
 
 // setUint64 decodes the value of the attribute into a uint64 value, returning if
 // the operation was successful.
 func (a attribute) setUint64(n *uint64) bool {
-	if a.n == nil {
+	if a.ulong == nil {
 		return false
 	}
-	*n = *a.n
+	*n = *a.ulong
 	return true
 }
 
 // setByte decodes the value of the attribute into a byte value, returning if
 // the operation was successful.
 func (a attribute) setByte(b *byte) bool {
-	if a.b == nil {
+	if a.byte == nil {
 		return false
 	}
-	*b = *a.b
+	*b = *a.byte
 	return true
 }
 

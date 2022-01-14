@@ -274,7 +274,7 @@ func (b *buffer) attribute(a *attribute) bool {
 		if !b.byte(&n) {
 			return false
 		}
-		attr.b = &n
+		attr.byte = &n
 	case attributeTypeUlong:
 		// https://github.com/p11-glue/p11-kit/blob/0.24.0/p11-kit/rpc-message.c#L891
 		// https://github.com/p11-glue/p11-kit/blob/0.24.0/p11-kit/rpc-message.c#L1097
@@ -282,7 +282,7 @@ func (b *buffer) attribute(a *attribute) bool {
 		if !b.uint64(&n) {
 			return false
 		}
-		attr.n = &n
+		attr.ulong = &n
 	case attributeTypeMechanismArray:
 		// TODO(ericchiang): implement
 		return false
@@ -293,7 +293,7 @@ func (b *buffer) attribute(a *attribute) bool {
 		if !b.date(&t) {
 			return false
 		}
-		attr.d = &t
+		attr.date = &t
 	case attributeTypeByteArray:
 		// https://github.com/p11-glue/p11-kit/blob/0.24.0/p11-kit/rpc-message.c#L895
 		// https://github.com/p11-glue/p11-kit/blob/0.24.0/p11-kit/rpc-message.c#L1211
@@ -301,7 +301,7 @@ func (b *buffer) attribute(a *attribute) bool {
 		if !b.byteArray(&arr) {
 			return false
 		}
-		attr.a = arr
+		attr.bytes = arr
 	default:
 		return false
 	}

@@ -155,6 +155,8 @@ type Slot struct {
 
 	HardwareVersion Version
 	FirmwareVersion Version
+
+	Objects []Object
 }
 
 // Server implements a server for the p11-kit PRC protocol.
@@ -181,16 +183,22 @@ type session struct {
 	findMatches []uint64
 }
 
-func (h *handler) newSearch(sessionID uint64, tmpl []attribute) error {
+func (h *handler) newFind(sessionID uint64, tmpl []attribute) error {
 	s, err := h.session(sessionID)
 	if err != nil {
 		return err
 	}
-	s.findMatches = []uint64{}
+	slot, err := h.slot(s.slotID)
+	if err != nil {
+		return err
+	}
+	for i := range slot.Objects {
+		s.findMatches = append(s.findMatches, uint64(i))
+	}
 	return nil
 }
 
-func (h *handler) nextSearch(sessionID uint64, max int) ([]uint64, error) {
+func (h *handler) findNext(sessionID uint64, max int) ([]uint64, error) {
 	s, err := h.session(sessionID)
 	if err != nil {
 		return nil, err
@@ -514,13 +522,14 @@ func (h *handler) handleFindObjectsInit(req *body) (*body, error) {
 	if err := req.err(); err != nil {
 		return nil, err
 	}
-	if err := h.newSearch(sessionID, tmpl); err != nil {
+	if err := h.newFind(sessionID, tmpl); err != nil {
 		return nil, err
 	}
 	return newResponse(req), nil
 }
 
 func (h *handler) handleFindObjects(req *body) (*body, error) {
+	// https://github.com/p11-glue/p11-kit/blob/0.24.0/p11-kit/rpc-client.c#L1228
 	var (
 		sessionID uint64
 		count     uint32
@@ -530,9 +539,13 @@ func (h *handler) handleFindObjects(req *body) (*body, error) {
 	if err := req.err(); err != nil {
 		return nil, err
 	}
-	objIDs, err := h.nextSearch(sessionID, int(count))
+	objIDs, err := h.findNext(sessionID, int(count))
 	if err != nil {
 		return nil, err
+	}
+	if objIDs == nil {
+		// For some reason the client doesn't like handling non-valid arrays.
+		objIDs = []uint64{}
 	}
 	resp := newResponse(req)
 	resp.writeUlongArray(objIDs, uint32(len(objIDs)))
