@@ -99,6 +99,15 @@ func TestPKCS11Tool(t *testing.T) {
 
 			errCh := make(chan error)
 			go func() {
+				done := make(chan struct{})
+				defer close(done)
+				go func() {
+					select {
+					case <-done:
+					case <-time.After(time.Second * 10):
+						l.Close()
+					}
+				}()
 				conn, err := l.Accept()
 				if err != nil {
 					errCh <- err
@@ -126,7 +135,7 @@ func TestPKCS11Tool(t *testing.T) {
 			cmd.Stderr = &stderr
 
 			if err := cmd.Run(); err != nil {
-				t.Errorf("command failed: %v: %s", err, &stderr)
+				t.Errorf("command failed: %v\nstderr=%s\nstdout=%s", err, &stderr, &stdout)
 			} else {
 				t.Logf("%s", &stdout)
 			}
