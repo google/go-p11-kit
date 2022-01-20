@@ -53,7 +53,7 @@ func NewX509CertificateObject(cert *x509.Certificate) (*Object, error) { ... }
 func NewPublicKeyObject(pub crypto.PublicKey) (*Object, error) { ... }
 func NewPrivateKeyObject(priv crypto.PrivateKey) (*Object, error) { ... }
 
-type Server struct {
+type Handler struct {
 	Manufacturer   string
 	Library        string
 	LibraryVersion Version
