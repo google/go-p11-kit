@@ -15,7 +15,7 @@ import (
 )
 
 const (
-	p11KitClientPath    = "/usr/lib/x86_64-linux-gnu/pkcs11/p11-kit-client.so"
+	p11KitClientPath    = "/usr/local/lib/x86_64-linux-gnu/pkcs11/p11-kit-client.so"
 	p11KitEnvServerAddr = "P11_KIT_SERVER_ADDRESS"
 	p11KitEnvServerPID  = "P11_KIT_SERVER_PID"
 )

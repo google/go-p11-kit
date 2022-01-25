@@ -184,13 +184,14 @@ func newBuffer(b []byte) buffer {
 // https://github.com/p11-glue/p11-kit/blob/0.24.0/p11-kit/rpc-message.c#L1039
 func (b *buffer) addAttribute(a attribute) {
 	b.addUint32(uint32(a.typ))
-	if a.value == nil {
+	val := a.value()
+	if val == nil {
 		b.addByte(0)
 		return
 	}
 	b.addByte(1)
-	b.addUint32(uint32(len(a.value)))
-	b.b = append(b.b, a.value...)
+	b.addUint32(uint32(len(val)))
+	b.b = append(b.b, val...)
 }
 
 func (b *buffer) addByteArray(a []byte) {
@@ -384,14 +385,15 @@ func newResponse(req *body) *body {
 }
 
 const (
-	sigAttributeArray = "aA"
-	sigByte           = "y"
-	sigByteArray      = "ay"
-	sigUlong          = "u"
-	sigUlongArray     = "au"
-	sigUlongBuffer    = "fu"
-	sigString         = "s"
-	sigVersion        = "v"
+	sigAttributeArray  = "aA"
+	sigAttributeBuffer = "fA"
+	sigByte            = "y"
+	sigByteArray       = "ay"
+	sigUlong           = "u"
+	sigUlongArray      = "au"
+	sigUlongBuffer     = "fu"
+	sigString          = "s"
+	sigVersion         = "v"
 )
 
 func (b *body) err() error {
@@ -573,6 +575,26 @@ func (b *body) readUlong(n *uint64) {
 func (b *body) readUlongBuffer(count *uint32) {
 	b.decode(sigUlongBuffer, func() bool {
 		return b.buffer.uint32(count)
+	})
+}
+
+// https://github.com/p11-glue/p11-kit/blob/0.24.0/p11-kit/rpc-message.c#L247
+func (b *body) readAttributeBuffer(attrs *[]attributeTemplate) {
+	b.decode(sigAttributeBuffer, func() bool {
+		var count uint32
+		if !b.buffer.uint32(&count) {
+			return false
+		}
+		var arr []attributeTemplate
+		for i := uint32(0); i < count; i++ {
+			var typ, valLen uint32
+			if !b.buffer.uint32(&typ) || !b.buffer.uint32(&valLen) {
+				return false
+			}
+			arr = append(arr, attributeTemplate{attributeType(typ), valLen})
+		}
+		*attrs = arr
+		return true
 	})
 }
 

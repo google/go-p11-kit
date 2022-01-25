@@ -1,12 +1,18 @@
 package p11kit
 
 import (
+	"crypto/rand"
 	"crypto/x509"
 	"fmt"
+	"math"
+	"math/big"
+	"sync"
 	"time"
 )
 
 type Object struct {
+	id uint64
+
 	attributes []attribute
 }
 
@@ -14,6 +20,15 @@ func (o *Object) SetLabel(label string) {
 	o.attributes = append(o.attributes, attribute{
 		typ: attributeLabel, bytes: []byte(label),
 	})
+}
+
+func (o *Object) attributeValue(typ attributeType) (attribute, bool) {
+	for _, a := range o.attributes {
+		if a.typ == typ {
+			return a, true
+		}
+	}
+	return attribute{}, false
 }
 
 const (
@@ -27,12 +42,34 @@ const (
 	ckoPrivateKey  uint64 = 0x00000003
 )
 
+var (
+	maxUint64     *big.Int
+	maxUint64Once sync.Once
+)
+
+func newObjectID() (uint64, error) {
+	maxUint64Once.Do(func() {
+		var n big.Int
+		maxUint64 = n.SetUint64(math.MaxUint64)
+	})
+	id, err := rand.Int(rand.Reader, maxUint64)
+	if err != nil {
+		return 0, err
+	}
+	return id.Uint64(), nil
+}
+
 func NewX509CertificateObject(cert *x509.Certificate) (Object, error) {
+	id, err := newObjectID()
+	if err != nil {
+		return Object{}, err
+	}
 	// http://docs.oasis-open.org/pkcs11/pkcs11-base/v2.40/os/pkcs11-base-v2.40-os.html#_Toc416959711
 	// http://docs.oasis-open.org/pkcs11/pkcs11-base/v2.40/os/pkcs11-base-v2.40-os.html#_Toc416959712
 	certType := ckcX509
 	objectType := ckoCertificate
 	return Object{
+		id: id,
 		attributes: []attribute{
 			{typ: attributeClass, ulong: &objectType},         // CKA_CLASS
 			{typ: attributeCertificateType, ulong: &certType}, // CKA_CERTIFICATE_TYPE
@@ -45,14 +82,18 @@ func NewX509CertificateObject(cert *x509.Certificate) (Object, error) {
 
 // attribute represents a PKCS #11 attribute, a typed object with optional value.
 type attribute struct {
-	typ   attributeType
-	value []byte
+	typ attributeType
 
 	byte       *byte      // byte
 	ulong      *uint64    // ulong
 	mechanisms []uint64   // mechanism array
 	date       *time.Time // date
 	bytes      []byte     // byte array
+}
+
+type attributeTemplate struct {
+	typ attributeType
+	len uint32
 }
 
 // setBytes decodes the value of the attribute into a byte array, returning if
@@ -93,53 +134,6 @@ func (a attribute) setByte(b *byte) bool {
 	}
 	*b = *a.byte
 	return true
-}
-
-// NewAttribute returns an attribute of the given type with no value. Use the
-// various Set methods to set the value.
-//
-// If set, the type of the value MUST match the type of the attribute. It's up
-// to the caller to know which type holds what value.
-//
-// See:
-// https://github.com/p11-glue/p11-kit/blob/0.24.0/p11-kit/rpc-message.c#L782
-func NewAttribute(t attributeType) attribute {
-	return attribute{typ: t}
-}
-
-// SetByte sets the value of the attribute to a single byte.
-func (a *attribute) SetByte(b byte) {
-	// https://github.com/p11-glue/p11-kit/blob/0.24.0/p11-kit/rpc-message.c#L890
-	// https://github.com/p11-glue/p11-kit/blob/0.24.0/p11-kit/rpc-message.c#L901
-	a.value = []byte{b}
-}
-
-// SetBytes sets the value of the attribute to a byte array.
-func (a *attribute) SetBytes(arr []byte) {
-	// https://github.com/p11-glue/p11-kit/blob/0.24.0/p11-kit/rpc-message.c#L895
-	// https://github.com/p11-glue/p11-kit/blob/0.24.0/p11-kit/rpc-message.c#L1024
-	var b buffer
-	b.addByteArray(arr)
-	a.value = b.bytes()
-}
-
-// SetUint64 sets the value of the attribute to a ulong.
-func (a *attribute) SetUint64(n uint64) {
-	// https://github.com/p11-glue/p11-kit/blob/0.24.0/p11-kit/rpc-message.c#L891
-	// https://github.com/p11-glue/p11-kit/blob/0.24.0/p11-kit/rpc-message.c#L919
-	var b buffer
-	b.addUint64(n)
-	a.value = b.bytes()
-}
-
-// SetDate sets the value of the attribute to a CK_DATE.
-func (a *attribute) SetDate(year, month, day int) {
-	// https://github.com/p11-glue/p11-kit/blob/0.24.0/p11-kit/rpc-message.c#L894
-	// https://github.com/p11-glue/p11-kit/blob/0.24.0/p11-kit/rpc-message.c#L998
-	t := time.Date(year, time.Month(month), day, 0, 0, 0, 0, time.UTC)
-	var b buffer
-	b.addDate(t)
-	a.value = b.bytes()
 }
 
 const (
@@ -250,29 +244,34 @@ func (a attributeType) valueType() int {
 	}
 }
 
-// https://github.com/p11-glue/p11-kit/blob/0.24.0/p11-kit/rpc-message.c#L890
-// https://github.com/p11-glue/p11-kit/blob/0.24.0/p11-kit/rpc-message.c#L901
-func newByteAttribute(t attributeType, b byte) *attribute {
-	return &attribute{typ: t, value: []byte{b}}
-}
-
-// https://github.com/p11-glue/p11-kit/blob/0.24.0/p11-kit/rpc-message.c#L891
-// https://github.com/p11-glue/p11-kit/blob/0.24.0/p11-kit/rpc-message.c#L919
-func newUlongAttribute(t attributeType, n uint64) *attribute {
-	var b buffer
-	b.addUint64(n)
-	return &attribute{typ: t, value: b.bytes()}
-}
-
-// https://github.com/p11-glue/p11-kit/blob/0.24.0/p11-kit/rpc-message.c#L893
-// https://github.com/p11-glue/p11-kit/blob/0.24.0/p11-kit/rpc-message.c#L968
-func newMechanismTypeArrayAttribute(t attributeType, arr []uint64) *attribute {
-	var b buffer
-	b.addUint32(uint32(len(arr)))
-	for _, m := range arr {
-		b.addUint64(m)
+func (a *attribute) value() []byte {
+	if a.byte != nil {
+		// https://github.com/p11-glue/p11-kit/blob/0.24.0/p11-kit/rpc-message.c#L890
+		// https://github.com/p11-glue/p11-kit/blob/0.24.0/p11-kit/rpc-message.c#L901
+		return []byte{*a.byte}
 	}
-	return &attribute{typ: t, value: b.bytes()}
+	if a.ulong != nil {
+		// https://github.com/p11-glue/p11-kit/blob/0.24.0/p11-kit/rpc-message.c#L891
+		// https://github.com/p11-glue/p11-kit/blob/0.24.0/p11-kit/rpc-message.c#L919
+		var b buffer
+		b.addUint64(*a.ulong)
+		return b.bytes()
+	}
+	if a.bytes != nil {
+		// https://github.com/p11-glue/p11-kit/blob/0.24.0/p11-kit/rpc-message.c#L895
+		// https://github.com/p11-glue/p11-kit/blob/0.24.0/p11-kit/rpc-message.c#L730
+		var b buffer
+		b.addByteArray(a.bytes)
+		return b.bytes()
+	}
+	if a.date != nil {
+		// https://github.com/p11-glue/p11-kit/blob/0.24.0/p11-kit/rpc-message.c#L894
+		// https://github.com/p11-glue/p11-kit/blob/0.24.0/p11-kit/rpc-message.c#L998
+		var b buffer
+		b.addDate(*a.date)
+		return b.bytes()
+	}
+	return nil
 }
 
 // attributeType indicates the meaning of the attribute values.

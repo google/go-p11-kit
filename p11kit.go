@@ -177,6 +177,34 @@ type handler struct {
 	sessions map[uint64]*session
 }
 
+func (h *handler) attributeValue(sessionID, objectID uint64, tmpl []attributeTemplate) ([]attribute, error) {
+	s, err := h.session(sessionID)
+	if err != nil {
+		return nil, err
+	}
+	slot, err := h.slot(s.slotID)
+	if err != nil {
+		return nil, err
+	}
+	for _, o := range slot.Objects {
+		if o.id != objectID {
+			continue
+		}
+
+		var attrs []attribute
+		for _, t := range tmpl {
+			a, ok := o.attributeValue(t.typ)
+			if !ok {
+				attrs = append(attrs, attribute{typ: t.typ})
+				continue
+			}
+			attrs = append(attrs, a)
+		}
+		return attrs, nil
+	}
+	return nil, ErrObjectHandleInvalid
+}
+
 type session struct {
 	slotID uint64
 
@@ -192,8 +220,8 @@ func (h *handler) newFind(sessionID uint64, tmpl []attribute) error {
 	if err != nil {
 		return err
 	}
-	for i := range slot.Objects {
-		s.findMatches = append(s.findMatches, uint64(i))
+	for _, o := range slot.Objects {
+		s.findMatches = append(s.findMatches, o.id)
 	}
 	return nil
 }
@@ -277,16 +305,17 @@ func (s *Server) Handle(rw io.ReadWriter) error {
 			done = true
 			return req, nil
 		},
-		callInitialize:       h.handleInitialize,
-		callGetInfo:          h.handleGetInfo,
-		callGetSlotList:      h.handleGetSlotList,
-		callGetTokenInfo:     h.handleGetTokenInfo,
-		callGetSlotInfo:      h.handleGetSlotInfo,
-		callOpenSession:      h.handleOpenSession,
-		callCloseSession:     h.handleCloseSession,
-		callFindObjectsInit:  h.handleFindObjectsInit,
-		callFindObjects:      h.handleFindObjects,
-		callFindObjectsFinal: h.handleFindObjectsFinal,
+		callInitialize:        h.handleInitialize,
+		callGetInfo:           h.handleGetInfo,
+		callGetSlotList:       h.handleGetSlotList,
+		callGetTokenInfo:      h.handleGetTokenInfo,
+		callGetSlotInfo:       h.handleGetSlotInfo,
+		callOpenSession:       h.handleOpenSession,
+		callCloseSession:      h.handleCloseSession,
+		callFindObjectsInit:   h.handleFindObjectsInit,
+		callFindObjects:       h.handleFindObjects,
+		callFindObjectsFinal:  h.handleFindObjectsFinal,
+		callGetAttributeValue: h.handleGetAttributeValue,
 	}
 
 	for !done {
@@ -559,6 +588,32 @@ func (h *handler) handleFindObjectsFinal(req *body) (*body, error) {
 		return nil, err
 	}
 	return newResponse(req), nil
+}
+
+func (h *handler) handleGetAttributeValue(req *body) (*body, error) {
+	// https://github.com/p11-glue/p11-kit/blob/0.24.0/p11-kit/rpc-client.c#L1184
+	var (
+		sessionID uint64
+		objectID  uint64
+		attrs     []attributeTemplate
+	)
+	req.readUlong(&sessionID)
+	req.readUlong(&objectID)
+	req.readAttributeBuffer(&attrs)
+	if err := req.err(); err != nil {
+		return nil, err
+	}
+
+	arr, err := h.attributeValue(sessionID, objectID, attrs)
+	if err != nil {
+		return nil, err
+	}
+
+	resp := newResponse(req)
+	resp.writeAttributeArray(arr)
+	// https://github.com/p11-glue/p11-kit/blob/0.24.1/p11-kit/rpc-server.c#L361
+	resp.writeUlong(0)
+	return resp, nil
 }
 
 func writeByte(w io.Writer, b byte) error {
