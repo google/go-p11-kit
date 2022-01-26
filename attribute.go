@@ -1,8 +1,13 @@
 package p11kit
 
 import (
+	"crypto"
+	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/rsa"
 	"crypto/x509"
+	"encoding/asn1"
 	"fmt"
 	"math"
 	"math/big"
@@ -14,6 +19,9 @@ type Object struct {
 	id uint64
 
 	attributes []attribute
+
+	pub  crypto.PublicKey
+	priv crypto.PrivateKey
 }
 
 func (o *Object) SetLabel(label string) {
@@ -40,6 +48,10 @@ const (
 	ckoCertificate uint64 = 0x00000001
 	ckoPublicKey   uint64 = 0x00000002
 	ckoPrivateKey  uint64 = 0x00000003
+
+	// https://github.com/Pkcs11Interop/PKCS11-SPECS/blob/master/v2.20/headers/pkcs11t.h#L370-L380
+	ckkRSA   uint64 = 0x00000000
+	ckkECDSA uint64 = 0x00000003
 )
 
 var (
@@ -59,6 +71,98 @@ func newObjectID() (uint64, error) {
 	return id.Uint64(), nil
 }
 
+// RFC 5480, 2.1.1.1. Named Curve
+//
+// secp224r1 OBJECT IDENTIFIER ::= {
+//   iso(1) identified-organization(3) certicom(132) curve(0) 33 }
+//
+// secp256r1 OBJECT IDENTIFIER ::= {
+//   iso(1) member-body(2) us(840) ansi-X9-62(10045) curves(3)
+//   prime(1) 7 }
+//
+// secp384r1 OBJECT IDENTIFIER ::= {
+//   iso(1) identified-organization(3) certicom(132) curve(0) 34 }
+//
+// secp521r1 OBJECT IDENTIFIER ::= {
+//   iso(1) identified-organization(3) certicom(132) curve(0) 35 }
+//
+var (
+	oidNamedCurveP224 = asn1.ObjectIdentifier{1, 3, 132, 0, 33}
+	oidNamedCurveP256 = asn1.ObjectIdentifier{1, 2, 840, 10045, 3, 1, 7}
+	oidNamedCurveP384 = asn1.ObjectIdentifier{1, 3, 132, 0, 34}
+	oidNamedCurveP521 = asn1.ObjectIdentifier{1, 3, 132, 0, 35}
+)
+
+func NewPublicKeyObject(pub crypto.PublicKey) (Object, error) {
+	id, err := newObjectID()
+	if err != nil {
+		return Object{}, err
+	}
+
+	// TODO(ericchiang): support CKA_VERIFY.
+
+	// http://docs.oasis-open.org/pkcs11/pkcs11-base/v2.40/os/pkcs11-base-v2.40-os.html#_Toc416959718
+	objectClass := ckoPublicKey
+	bFalse := byte(0)
+	o := Object{
+		id: id,
+		attributes: []attribute{
+			{typ: attributeClass, ulong: &objectClass},   // CKA_CLASS
+			{typ: attributeEncrypt, byte: &bFalse},       // CKA_ENCRYPT
+			{typ: attributeVerify, byte: &bFalse},        // CKA_VERIFY
+			{typ: attributeVerifyRecover, byte: &bFalse}, // CKA_VERIFY_RECOVER
+			{typ: attributeWrap, byte: &bFalse},          // CKA_WRAP
+		},
+		pub: pub,
+	}
+
+	switch pub := pub.(type) {
+	case *ecdsa.PublicKey:
+		// http://docs.oasis-open.org/pkcs11/pkcs11-curr/v2.40/errata01/os/pkcs11-curr-v2.40-errata01-os-complete.html#_Toc441850449
+		var oid asn1.ObjectIdentifier
+		switch pub.Curve {
+		case elliptic.P224():
+			oid = oidNamedCurveP224
+		case elliptic.P256():
+			oid = oidNamedCurveP256
+		case elliptic.P384():
+			oid = oidNamedCurveP384
+		case elliptic.P521():
+			oid = oidNamedCurveP521
+		default:
+			return Object{}, fmt.Errorf("unsupported ecdsa curve: %v", pub.Curve.Params().Name)
+		}
+		params, err := asn1.Marshal(oid)
+		if err != nil {
+			return Object{}, fmt.Errorf("encoding ecdsa curve: %v", err)
+		}
+
+		keyType := ckkECDSA
+		point := elliptic.Marshal(pub.Curve, pub.X, pub.Y)
+		o.attributes = append(o.attributes,
+			attribute{typ: attributeKeyType, ulong: &keyType}, // CKA_KEY_TYPE
+			attribute{typ: attributeECParams, bytes: params},  // CKA_EC_PARAMS
+			attribute{typ: attributeECPoint, bytes: point},    // CKA_EC_POINT
+		)
+	case *rsa.PublicKey:
+		// TODO(ericchiang): support CKA_ENCRYPT for RSA public keys.
+
+		// http://docs.oasis-open.org/pkcs11/pkcs11-curr/v2.40/errata01/os/pkcs11-curr-v2.40-errata01-os-complete.html#_Toc441850406
+		size := uint64(pub.Size())
+		e := big.NewInt(int64(pub.E))
+		keyType := ckkRSA
+		o.attributes = append(o.attributes,
+			attribute{typ: attributeKeyType, ulong: &keyType},         // CKA_KEY_TYPE
+			attribute{typ: attributeModulus, bytes: pub.N.Bytes()},    // CKA_MODULUS
+			attribute{typ: attributeModulusBits, ulong: &size},        // CKA_MODULUS_BITS
+			attribute{typ: attributePublicExponent, bytes: e.Bytes()}, // CKA_PUBLIC_EXPONENT
+		)
+	default:
+		return Object{}, fmt.Errorf("unsupported public key type %T", pub)
+	}
+	return o, nil
+}
+
 func NewX509CertificateObject(cert *x509.Certificate) (Object, error) {
 	id, err := newObjectID()
 	if err != nil {
@@ -67,11 +171,11 @@ func NewX509CertificateObject(cert *x509.Certificate) (Object, error) {
 	// http://docs.oasis-open.org/pkcs11/pkcs11-base/v2.40/os/pkcs11-base-v2.40-os.html#_Toc416959711
 	// http://docs.oasis-open.org/pkcs11/pkcs11-base/v2.40/os/pkcs11-base-v2.40-os.html#_Toc416959712
 	certType := ckcX509
-	objectType := ckoCertificate
+	objectClass := ckoCertificate
 	return Object{
 		id: id,
 		attributes: []attribute{
-			{typ: attributeClass, ulong: &objectType},         // CKA_CLASS
+			{typ: attributeClass, ulong: &objectClass},        // CKA_CLASS
 			{typ: attributeCertificateType, ulong: &certType}, // CKA_CERTIFICATE_TYPE
 			{typ: attributeSubject, bytes: cert.RawSubject},   // CKA_SUBJECT
 			{typ: attributeIssuer, bytes: cert.RawIssuer},     // CKA_ISSUER

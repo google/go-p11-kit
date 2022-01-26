@@ -3,6 +3,7 @@ package p11kit
 import (
 	"bytes"
 	"context"
+	"crypto"
 	"crypto/x509"
 	"encoding/pem"
 	"net"
@@ -94,10 +95,28 @@ w1vlsdjMVkph7Q3BwYePP5SZ/N3jFKwptGhHeBFYRHoBuGBfqrOq1vqPIvtbaYQF
 kdvOoL5VnzG5buw3BwXOEb6QGZCBMa0kXYCbGIa0SQ+3Md8TMFNo9fHteQ47dUYX
 x+4U
 -----END CERTIFICATE-----`
+
+	// openssl req -x509 -subj '/CN=test' -sha256 -nodes -days 365 -newkey ec -pkeyopt ec_paramgen_curve:P-256 --keyout=/dev/stdout
+	testECDSAPrivKey = `-----BEGIN PRIVATE KEY-----
+MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgGP5IFr7U7klzbqVe
+man/Aa5pmt7ACfQpxhf7yoVvZVOhRANCAASh6q01mGb+bJklMwLw2/ioXTbiHhI8
+U93xfG0atMwO7C0UjcegEip85KjQpcF5/BQIzp78lUx0ut8c0q/HqHO6
+-----END PRIVATE KEY-----`
+	testECDSACert = `-----BEGIN CERTIFICATE-----
+MIIBdDCCARmgAwIBAgIUW64CYBM36fgHEL3WHBM97bRrDxwwCgYIKoZIzj0EAwIw
+DzENMAsGA1UEAwwEdGVzdDAeFw0yMjAxMjYxOTE0MjlaFw0yMzAxMjYxOTE0Mjla
+MA8xDTALBgNVBAMMBHRlc3QwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAASh6q01
+mGb+bJklMwLw2/ioXTbiHhI8U93xfG0atMwO7C0UjcegEip85KjQpcF5/BQIzp78
+lUx0ut8c0q/HqHO6o1MwUTAdBgNVHQ4EFgQUJBY0DVgllZRJZ7qATbxrgNCY3Fsw
+HwYDVR0jBBgwFoAUJBY0DVgllZRJZ7qATbxrgNCY3FswDwYDVR0TAQH/BAUwAwEB
+/zAKBggqhkjOPQQDAgNJADBGAiEAqJHZtkM3Bp9A70fyf6a0Pz32G57kI00NcghT
+v6PMfQMCIQCH3a31qlv3pnnG3jF4AGteFlvm/cAW/0Yzj7+nniUEyg==
+-----END CERTIFICATE-----`
 )
 
-func newTestServer(t *testing.T) *Server {
-	pemCert, _ := pem.Decode([]byte(testRSACert))
+func parseCert(t *testing.T, data string) Object {
+	t.Helper()
+	pemCert, _ := pem.Decode([]byte(data))
 	if pemCert == nil {
 		t.Fatalf("Failed to decode test certificate")
 	}
@@ -109,7 +128,47 @@ func newTestServer(t *testing.T) *Server {
 	if err != nil {
 		t.Fatalf("Creating x509 certificate object: %v", err)
 	}
-	certObj.SetLabel("foo")
+	return certObj
+}
+
+func parsePub(t *testing.T, data string) Object {
+	t.Helper()
+	pemPriv, _ := pem.Decode([]byte(data))
+	if pemPriv == nil {
+		t.Fatalf("Failed to decode test key")
+	}
+	priv, err := x509.ParsePKCS8PrivateKey(pemPriv.Bytes)
+	if err != nil {
+		t.Fatalf("Parse test key: %v", err)
+	}
+	signer, ok := priv.(crypto.Signer)
+	if !ok {
+		t.Fatalf("Private key doesn't implement crypto.Signer: %T", priv)
+	}
+	pubObj, err := NewPublicKeyObject(signer.Public())
+	if err != nil {
+		t.Fatalf("Creating pub key object: %v", err)
+	}
+	return pubObj
+}
+
+func newTestServer(t *testing.T) *Server {
+	rsaCertObj := parseCert(t, testRSACert)
+	rsaPubObj := parsePub(t, testRSAPrivKey)
+	ecdsaCertObj := parseCert(t, testECDSACert)
+	ecdsaPubObj := parsePub(t, testECDSAPrivKey)
+
+	rsaCertObj.SetLabel("foo")
+	rsaPubObj.SetLabel("foo")
+	ecdsaCertObj.SetLabel("foo")
+	ecdsaPubObj.SetLabel("foo")
+
+	objects := []Object{
+		rsaCertObj,
+		rsaPubObj,
+		ecdsaCertObj,
+		ecdsaPubObj,
+	}
 
 	hwVersion := Version{0x01, 0x01}
 	fwVersion := Version{0x02, 0x02}
@@ -129,7 +188,7 @@ func newTestServer(t *testing.T) *Server {
 				Serial:          "serial-0x01",
 				HardwareVersion: hwVersion,
 				FirmwareVersion: fwVersion,
-				Objects:         []Object{certObj},
+				Objects:         objects,
 			},
 			{
 				ID:              0x02,
@@ -139,7 +198,7 @@ func newTestServer(t *testing.T) *Server {
 				Serial:          "serial-0x02",
 				HardwareVersion: hwVersion,
 				FirmwareVersion: fwVersion,
-				Objects:         []Object{certObj},
+				Objects:         objects,
 			},
 		},
 	}
