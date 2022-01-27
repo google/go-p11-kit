@@ -152,22 +152,45 @@ func parsePub(t *testing.T, data string) Object {
 	return pubObj
 }
 
+func parsePriv(t *testing.T, data string) Object {
+	t.Helper()
+	pemPriv, _ := pem.Decode([]byte(data))
+	if pemPriv == nil {
+		t.Fatalf("Failed to decode test key")
+	}
+	priv, err := x509.ParsePKCS8PrivateKey(pemPriv.Bytes)
+	if err != nil {
+		t.Fatalf("Parse test key: %v", err)
+	}
+	privObj, err := NewPrivateKeyObject(priv)
+	if err != nil {
+		t.Fatalf("Creating pub key object: %v", err)
+	}
+	return privObj
+}
+
 func newTestServer(t *testing.T) *Server {
 	rsaCertObj := parseCert(t, testRSACert)
 	rsaPubObj := parsePub(t, testRSAPrivKey)
+	rsaPrivObj := parsePriv(t, testRSAPrivKey)
 	ecdsaCertObj := parseCert(t, testECDSACert)
 	ecdsaPubObj := parsePub(t, testECDSAPrivKey)
+	ecdsaPrivObj := parsePriv(t, testECDSAPrivKey)
 
 	rsaCertObj.SetLabel("foo")
 	rsaPubObj.SetLabel("foo")
+	rsaPrivObj.SetLabel("foo")
 	ecdsaCertObj.SetLabel("foo")
 	ecdsaPubObj.SetLabel("foo")
+	ecdsaPrivObj.SetLabel("foo")
 
 	objects := []Object{
 		rsaCertObj,
 		rsaPubObj,
+		rsaPrivObj,
 		ecdsaCertObj,
 		ecdsaPubObj,
+		ecdsaPrivObj,
 	}
 
 	hwVersion := Version{0x01, 0x01}

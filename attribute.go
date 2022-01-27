@@ -93,32 +93,74 @@ var (
 	oidNamedCurveP521 = asn1.ObjectIdentifier{1, 3, 132, 0, 35}
 )
 
+func NewPrivateKeyObject(priv crypto.PrivateKey) (Object, error) {
+	signer, ok := priv.(crypto.Signer)
+	if !ok {
+		return Object{}, fmt.Errorf("private key doesn't implement crypto.Signer: %T", priv)
+	}
+	id, err := newObjectID()
+	if err != nil {
+		return Object{}, err
+	}
+	attrs, err := newKeyObject(signer.Public(), true)
+	if err != nil {
+		return Object{}, err
+	}
+	return Object{id: id, attributes: attrs, priv: priv}, nil
+}
+
 func NewPublicKeyObject(pub crypto.PublicKey) (Object, error) {
 	id, err := newObjectID()
 	if err != nil {
 		return Object{}, err
 	}
+	attrs, err := newKeyObject(pub, false)
+	if err != nil {
+		return Object{}, err
+	}
+	return Object{id: id, attributes: attrs, pub: pub}, nil
+}
 
-	// TODO(ericchiang): support CKA_VERIFY.
+var (
+	bFalse *byte
+	bTrue  *byte
+)
 
+func init() {
+	// https://go.dev/issues/45624
+	f := byte(0)
+	t := byte(1)
+	bFalse = &f
+	bTrue = &t
+}
+
+func newKeyObject(pub crypto.PublicKey, isPrivate bool) ([]attribute, error) {
 	// http://docs.oasis-open.org/pkcs11/pkcs11-base/v2.40/os/pkcs11-base-v2.40-os.html#_Toc416959718
+	// http://docs.oasis-open.org/pkcs11/pkcs11-base/v2.40/os/pkcs11-base-v2.40-os.html#_Toc416959719
 	objectClass := ckoPublicKey
-	bFalse := byte(0)
-	o := Object{
-		id: id,
-		attributes: []attribute{
-			{typ: attributeClass, ulong: &objectClass},   // CKA_CLASS
-			{typ: attributeEncrypt, byte: &bFalse},       // CKA_ENCRYPT
-			{typ: attributeVerify, byte: &bFalse},        // CKA_VERIFY
-			{typ: attributeVerifyRecover, byte: &bFalse}, // CKA_VERIFY_RECOVER
-			{typ: attributeWrap, byte: &bFalse},          // CKA_WRAP
-		},
-		pub: pub,
+	verify := bTrue
+	if isPrivate {
+		objectClass = ckoPrivateKey
+		verify = bFalse
+	}
+
+	attrs := []attribute{
+		{typ: attributeClass, ulong: &objectClass},  // CKA_CLASS
+		{typ: attributeVerifyRecover, byte: bFalse}, // CKA_VERIFY_RECOVER
+		{typ: attributeWrap, byte: bFalse},          // CKA_WRAP
+		{typ: attributeVerify, byte: verify},        // CKA_VERIFY
+	}
+
+	if isPrivate {
+		attrs = append(attrs,
+			attribute{typ: attributeExtractable, byte: bFalse}, // CKA_EXTRACTABLE
+		)
 	}
 
 	switch pub := pub.(type) {
 	case *ecdsa.PublicKey:
 		// http://docs.oasis-open.org/pkcs11/pkcs11-curr/v2.40/errata01/os/pkcs11-curr-v2.40-errata01-os-complete.html#_Toc441850449
+		// http://docs.oasis-open.org/pkcs11/pkcs11-curr/v2.40/errata01/os/pkcs11-curr-v2.40-errata01-os-complete.html#_Toc441850450
 		var oid asn1.ObjectIdentifier
 		switch pub.Curve {
 		case elliptic.P224():
@@ -130,37 +172,62 @@ func NewPublicKeyObject(pub crypto.PublicKey) (Object, error) {
 		case elliptic.P521():
 			oid = oidNamedCurveP521
 		default:
-			return Object{}, fmt.Errorf("unsupported ecdsa curve: %v", pub.Curve.Params().Name)
+			return nil, fmt.Errorf("unsupported ecdsa curve: %v", pub.Curve.Params().Name)
 		}
 		params, err := asn1.Marshal(oid)
 		if err != nil {
-			return Object{}, fmt.Errorf("encoding ecdsa curve: %v", err)
+			return nil, fmt.Errorf("encoding ecdsa curve: %v", err)
 		}
 
 		keyType := ckkECDSA
-		point := elliptic.Marshal(pub.Curve, pub.X, pub.Y)
-		o.attributes = append(o.attributes,
+		attrs = append(attrs,
 			attribute{typ: attributeKeyType, ulong: &keyType}, // CKA_KEY_TYPE
 			attribute{typ: attributeECParams, bytes: params},  // CKA_EC_PARAMS
-			attribute{typ: attributeECPoint, bytes: point},    // CKA_EC_POINT
 		)
+		if isPrivate {
+			attrs = append(attrs,
+				attribute{typ: attributeDecrypt, byte: bFalse}, // CKA_DECRYPT
+				attribute{typ: attributeValue},                 // CKA_VALUE (empty)
+			)
+		} else {
+			point := elliptic.Marshal(pub.Curve, pub.X, pub.Y)
+			attrs = append(attrs,
+				attribute{typ: attributeEncrypt, byte: bFalse}, // CKA_ENCRYPT
+				attribute{typ: attributeECPoint, bytes: point}, // CKA_EC_POINT
+			)
+		}
 	case *rsa.PublicKey:
 		// TODO(ericchiang): support CKA_ENCRYPT for RSA public keys.
 
 		// http://docs.oasis-open.org/pkcs11/pkcs11-curr/v2.40/errata01/os/pkcs11-curr-v2.40-errata01-os-complete.html#_Toc441850406
+		// http://docs.oasis-open.org/pkcs11/pkcs11-curr/v2.40/errata01/os/pkcs11-curr-v2.40-errata01-os-complete.html#_Toc441850407
 		size := uint64(pub.Size())
 		e := big.NewInt(int64(pub.E))
 		keyType := ckkRSA
-		o.attributes = append(o.attributes,
+		attrs = append(attrs,
 			attribute{typ: attributeKeyType, ulong: &keyType},         // CKA_KEY_TYPE
 			attribute{typ: attributeModulus, bytes: pub.N.Bytes()},    // CKA_MODULUS
 			attribute{typ: attributeModulusBits, ulong: &size},        // CKA_MODULUS_BITS
 			attribute{typ: attributePublicExponent, bytes: e.Bytes()}, // CKA_PUBLIC_EXPONENT
 		)
+		if isPrivate {
+			attrs = append(attrs,
+				attribute{typ: attributeDecrypt, byte: bTrue}, // CKA_DECRYPT
+				attribute{typ: attributePrivateExponent},      // CKA_PRIVATE_EXPONENT (empty)
+				attribute{typ: attributePrime1},               // CKA_PRIME_1 (empty)
+				attribute{typ: attributePrime2},               // CKA_PRIME_2 (empty)
+				attribute{typ: attributeExponent1},            // CKA_EXPONENT_1 (empty)
+				attribute{typ: attributeExponent2},            // CKA_EXPONENT_2 (empty)
+				attribute{typ: attributeCoefficient},          // CKA_COEFFICIENT (empty)
+			)
+		} else {
+			attrs = append(attrs, attribute{typ: attributeEncrypt, byte: bTrue}) // CKA_ENCRYPT
+		}
 	default:
-		return Object{}, fmt.Errorf("unsupported public key type %T", pub)
+		return nil, fmt.Errorf("unsupported public key type %T", pub)
 	}
-	return o, nil
+
+	return attrs, nil
 }
 
 func NewX509CertificateObject(cert *x509.Certificate) (Object, error) {
