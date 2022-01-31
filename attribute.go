@@ -16,6 +16,7 @@ import (
 	"time"
 )
 
+// Object represents a single entity, such as a certificate, or private key.
 type Object struct {
 	id uint64
 
@@ -35,6 +36,8 @@ func (o *Object) matches(tmpl attribute) bool {
 	return false
 }
 
+// SetLabel applies a label to the object, allowing clients to differentiate
+// between different objects of the same type on a single slot.
 func (o *Object) SetLabel(label string) {
 	o.attributes = append(o.attributes, attribute{
 		typ: attributeLabel, bytes: []byte(label),
@@ -157,6 +160,9 @@ var (
 	oidNamedCurveP521 = asn1.ObjectIdentifier{1, 3, 132, 0, 35}
 )
 
+// NewPrivateKeyObject creates a PKCS #11 object from a private key.
+//
+// priv is expected to implement crypto.Signer, and optionally crypto.Decrypter.
 func NewPrivateKeyObject(priv crypto.PrivateKey) (Object, error) {
 	signer, ok := priv.(crypto.Signer)
 	if !ok {
@@ -173,6 +179,9 @@ func NewPrivateKeyObject(priv crypto.PrivateKey) (Object, error) {
 	return Object{id: id, attributes: attrs, priv: signer}, nil
 }
 
+// NewPublicKeyObject creates a PKCS #11 object from a public key.
+//
+// pub must be of underlying type *ecdsa.PublicKey or *rsa.PublicKey.
 func NewPublicKeyObject(pub crypto.PublicKey) (Object, error) {
 	id, err := newObjectID()
 	if err != nil {
@@ -295,6 +304,7 @@ func newKeyObject(pub crypto.PublicKey, isPrivate bool) ([]attribute, error) {
 	return attrs, nil
 }
 
+// NewX509CertificateObject creates a PKCS #11 X.509 certificate object.
 func NewX509CertificateObject(cert *x509.Certificate) (Object, error) {
 	id, err := newObjectID()
 	if err != nil {

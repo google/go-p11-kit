@@ -171,7 +171,7 @@ func parsePriv(t *testing.T, data string) Object {
 	return privObj
 }
 
-func newTestServer(t *testing.T) *Server {
+func newTestServer(t *testing.T) *Handler {
 	rsaCertObj := parseCert(t, testRSACert)
 	rsaPubObj := parsePub(t, testRSAPrivKey)
 	rsaPrivObj := parsePriv(t, testRSAPrivKey)
@@ -197,7 +197,7 @@ func newTestServer(t *testing.T) *Server {
 
 	hwVersion := Version{0x01, 0x01}
 	fwVersion := Version{0x02, 0x02}
-	return &Server{
+	return &Handler{
 		Manufacturer: "test",
 		Library:      "test_lib",
 		LibraryVersion: Version{

@@ -145,110 +145,58 @@ type Info struct {
 	// Flags is ignored since "bit flags reserved for future versions.  MUST be zero for this version"
 }
 
-// Slot holds information about the slot and token.
+// Slot is a logical grouping of objects, such as private keys and certificates.
 type Slot struct {
+	// ID is the unique identifier for the slot. It MUST be unique.
 	ID uint64
 
-	Description  string
-	Label        string
-	Manufacturer string
-	Model        string
-	Serial       string
-
+	// Information that describes the slot/token.
+	Description     string
+	Label           string
+	Manufacturer    string
+	Model           string
+	Serial          string
 	HardwareVersion Version
 	FirmwareVersion Version
 
+	// Objects held by the slot.
 	Objects []Object
+	// GetObjects allows dynamically retrieving objects instead of statically
+	// providing them as part of the Slot struct.
+	//
+	// This method is called once per-session, and the returned objects only
+	// live for the duration of that session.
+	GetObjects func() ([]Object, error)
 }
 
-// Server implements a server for the p11-kit PRC protocol.
-type Server struct {
-	Manufacturer   string
-	Library        string
+// Handler implements a server for the p11-kit PRC protocol.
+type Handler struct {
+	// Manufacturer of the module. Limited to 32 bytes.
+	Manufacturer string
+	// Name of the module. Limited to 32 bytes.
+	Library string
+	// Internal version of the module. This is NOT the version of the PKCS #11
+	// specification.
 	LibraryVersion Version
 
+	// Slots represents the slots/tokens the module provides. Slots hold
+	// collections of objects, such as keys or certificates.
+	//
+	// This package doesn't currently support slots that don't have an underlying
+	// token, and generally doesn't attempt to differentiate symantically between
+	// slots and tokens.
 	Slots []Slot
 }
 
-// handler holds per-handler data and multable state for a given client.
+// handler holds per-connection data and multable state for a given client.
+//
+// Client requests are serialized across a single connection, so no locking is
+// necessary.
 type handler struct {
-	s *Server
+	s *Handler
 
 	lastSessionID uint64
-
-	sessions map[uint64]*session
-}
-
-func (h *handler) attributeValue(sessionID, objectID uint64, tmpl []attributeTemplate) ([]attribute, error) {
-	s, err := h.session(sessionID)
-	if err != nil {
-		return nil, err
-	}
-	o, err := s.object(objectID)
-	if err != nil {
-		return nil, err
-	}
-
-	var attrs []attribute
-	for _, t := range tmpl {
-		a, ok := o.attributeValue(t.typ)
-		if !ok {
-			attrs = append(attrs, attribute{typ: t.typ})
-			continue
-		}
-		attrs = append(attrs, a)
-	}
-	return attrs, nil
-}
-
-type session struct {
-	objects []Object
-
-	findMatches []uint64
-
-	signMechanism mechanism
-	signObject    Object
-	signData      []byte
-}
-
-func (s *session) object(objectID uint64) (Object, error) {
-	for _, obj := range s.objects {
-		if obj.id == objectID {
-			return obj, nil
-		}
-	}
-	return Object{}, ErrObjectHandleInvalid
-}
-
-func (h *handler) newFind(sessionID uint64, tmpl []attribute) error {
-	s, err := h.session(sessionID)
-	if err != nil {
-		return err
-	}
-objects:
-	for _, o := range s.objects {
-		for _, a := range tmpl {
-			if !o.matches(a) {
-				continue objects
-			}
-		}
-		s.findMatches = append(s.findMatches, o.id)
-	}
-	return nil
-}
-
-func (h *handler) findNext(sessionID uint64, max int) ([]uint64, error) {
-	s, err := h.session(sessionID)
-	if err != nil {
-		return nil, err
-	}
-	m := s.findMatches
-	if max >= len(m) {
-		s.findMatches = nil
-		return m, nil
-	}
-	s.findMatches = m[max:]
-	return m[:max], nil
+	sessions      map[uint64]*session
 }
 
 func (h *handler) newSession(slotID uint64) (uint64, error) {
@@ -269,8 +217,18 @@ func (h *handler) newSession(slotID uint64) (uint64, error) {
 		nextSessionID++
 	}
 	h.lastSessionID = nextSessionID
+
+	objects := slot.Objects
+	if slot.GetObjects != nil {
+		objs, err := slot.GetObjects()
+		if err != nil {
+			return 0, err
+		}
+		objects = objs
+	}
+
 	h.sessions[nextSessionID] = &session{
-		objects: slot.Objects,
+		objects: objects,
 	}
 	return nextSessionID, nil
 }
@@ -298,13 +256,69 @@ func (h *handler) closeSession(id uint64) error {
 	return nil
 }
 
-// Handle begins serving RPC requests. p11-kit sessions are per-connection, not
-// concurrent. The client will open a single connection, call Initialize() and
-// issue comments, then Finalize() and drop the connection.
-//
-// Once this method returns, any resources associated with Server can be
-// released.
-func (s *Server) Handle(rw io.ReadWriter) error {
+// session holds state for PKCS #11 sessions.
+type session struct {
+	objects []Object
+
+	findMatches []uint64
+
+	signMechanism mechanism
+	signObject    Object
+	signData      []byte
+}
+
+func (s *session) attributeValue(objectID uint64, tmpl []attributeTemplate) ([]attribute, error) {
+	o, err := s.object(objectID)
+	if err != nil {
+		return nil, err
+	}
+
+	var attrs []attribute
+	for _, t := range tmpl {
+		a, ok := o.attributeValue(t.typ)
+		if !ok {
+			attrs = append(attrs, attribute{typ: t.typ})
+			continue
+		}
+		attrs = append(attrs, a)
+	}
+	return attrs, nil
+}
+
+func (s *session) object(objectID uint64) (Object, error) {
+	for _, obj := range s.objects {
+		if obj.id == objectID {
+			return obj, nil
+		}
+	}
+	return Object{}, ErrObjectHandleInvalid
+}
+
+func (s *session) find(sessionID uint64, tmpl []attribute) error {
+objects:
+	for _, o := range s.objects {
+		for _, a := range tmpl {
+			if !o.matches(a) {
+				continue objects
+			}
+		}
+		s.findMatches = append(s.findMatches, o.id)
+	}
+	return nil
+}
+
+func (s *session) findNext(sessionID uint64, max int) ([]uint64, error) {
+	m := s.findMatches
+	if max >= len(m) {
+		s.findMatches = nil
+		return m, nil
+	}
+	s.findMatches = m[max:]
+	return m[:max], nil
+}
+
+// Handle begins serving RPC requests for a given connection.
+func (s *Handler) Handle(rw io.ReadWriter) error {
 	if err := negotiateProtocolVersion(rw); err != nil {
 		return fmt.Errorf("negotiating protocol version: %v", err)
 	}
@@ -569,7 +583,11 @@ func (h *handler) handleFindObjectsInit(req *body) (*body, error) {
 	if err := req.err(); err != nil {
 		return nil, err
 	}
-	if err := h.newFind(sessionID, tmpl); err != nil {
+	s, err := h.session(sessionID)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.find(sessionID, tmpl); err != nil {
 		return nil, err
 	}
 	return newResponse(req), nil
@@ -586,7 +604,11 @@ func (h *handler) handleFindObjects(req *body) (*body, error) {
 	if err := req.err(); err != nil {
 		return nil, err
 	}
-	objIDs, err := h.findNext(sessionID, int(count))
+	s, err := h.session(sessionID)
+	if err != nil {
+		return nil, err
+	}
+	objIDs, err := s.findNext(sessionID, int(count))
 	if err != nil {
 		return nil, err
 	}
@@ -622,7 +644,11 @@ func (h *handler) handleGetAttributeValue(req *body) (*body, error) {
 		return nil, err
 	}
 
-	arr, err := h.attributeValue(sessionID, objectID, attrs)
+	s, err := h.session(sessionID)
+	if err != nil {
+		return nil, err
+	}
+	arr, err := s.attributeValue(objectID, attrs)
 	if err != nil {
 		return nil, err
 	}
