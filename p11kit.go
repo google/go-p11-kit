@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"math"
 )
 
@@ -12,9 +13,10 @@ import (
 type Error uint64
 
 var errStrings = map[Error]string{
-	ErrSlotIDInvalid: "invalid slot ID",
-	ErrGeneralError:  "general error",
-	ErrArgumentsBad:  "invalid function arguments",
+	ErrSlotIDInvalid:        "invalid slot ID",
+	ErrGeneralError:         "general error",
+	ErrArgumentsBad:         "invalid function arguments",
+	ErrFunctionNotSupported: "function not supported",
 }
 
 // Error returns a human readable message of the PKCS #11 return code.
@@ -182,33 +184,40 @@ func (h *handler) attributeValue(sessionID, objectID uint64, tmpl []attributeTem
 	if err != nil {
 		return nil, err
 	}
-	slot, err := h.slot(s.slotID)
+	o, err := s.object(objectID)
 	if err != nil {
 		return nil, err
 	}
-	for _, o := range slot.Objects {
-		if o.id != objectID {
+
+	var attrs []attribute
+	for _, t := range tmpl {
+		a, ok := o.attributeValue(t.typ)
+		if !ok {
+			attrs = append(attrs, attribute{typ: t.typ})
 			continue
 		}
-
-		var attrs []attribute
-		for _, t := range tmpl {
-			a, ok := o.attributeValue(t.typ)
-			if !ok {
-				attrs = append(attrs, attribute{typ: t.typ})
-				continue
-			}
-			attrs = append(attrs, a)
-		}
-		return attrs, nil
+		attrs = append(attrs, a)
 	}
-	return nil, ErrObjectHandleInvalid
+	return attrs, nil
 }
 
 type session struct {
-	slotID uint64
+	objects []Object
 
 	findMatches []uint64
+
+	signMechanism mechanism
+	signObject    Object
+	signData      []byte
+}
+
+func (s *session) object(objectID uint64) (Object, error) {
+	for _, obj := range s.objects {
+		if obj.id == objectID {
+			return obj, nil
+		}
+	}
+	return Object{}, ErrObjectHandleInvalid
 }
 
 func (h *handler) newFind(sessionID uint64, tmpl []attribute) error {
@@ -216,11 +225,13 @@ func (h *handler) newFind(sessionID uint64, tmpl []attribute) error {
 	if err != nil {
 		return err
 	}
-	slot, err := h.slot(s.slotID)
-	if err != nil {
-		return err
-	}
-	for _, o := range slot.Objects {
+objects:
+	for _, o := range s.objects {
+		for _, a := range tmpl {
+			if !o.matches(a) {
+				continue objects
+			}
+		}
 		s.findMatches = append(s.findMatches, o.id)
 	}
 	return nil
@@ -241,7 +252,8 @@ func (h *handler) findNext(sessionID uint64, max int) ([]uint64, error) {
 }
 
 func (h *handler) newSession(slotID uint64) (uint64, error) {
-	if _, err := h.slot(slotID); err != nil {
+	slot, err := h.slot(slotID)
+	if err != nil {
 		return 0, err
 	}
 
@@ -258,7 +270,7 @@ func (h *handler) newSession(slotID uint64) (uint64, error) {
 	}
 	h.lastSessionID = nextSessionID
 	h.sessions[nextSessionID] = &session{
-		slotID: slotID,
+		objects: slot.Objects,
 	}
 	return nextSessionID, nil
 }
@@ -316,6 +328,10 @@ func (s *Server) Handle(rw io.ReadWriter) error {
 		callFindObjects:       h.handleFindObjects,
 		callFindObjectsFinal:  h.handleFindObjectsFinal,
 		callGetAttributeValue: h.handleGetAttributeValue,
+		callSignInit:          h.handleSignInit,
+		callSign:              h.handleSign,
+		callSignUpdate:        h.handleSignUpdate,
+		callSignFinal:         h.handleSignFinal,
 	}
 
 	for !done {
@@ -330,6 +346,8 @@ func (s *Server) Handle(rw io.ReadWriter) error {
 			err = ErrFunctionNotSupported
 		}
 		if err != nil {
+			// TODO(ericchiang): refector so the logger is configured by Handler.
+			log.Printf("Error with %s: %v", req.call, err)
 			var cerr Error
 			if !errors.As(err, &cerr) {
 				return fmt.Errorf("%d failed: %v", req.call, err)
@@ -613,6 +631,103 @@ func (h *handler) handleGetAttributeValue(req *body) (*body, error) {
 	resp.writeAttributeArray(arr)
 	// https://github.com/p11-glue/p11-kit/blob/0.24.1/p11-kit/rpc-server.c#L361
 	resp.writeUlong(0)
+	return resp, nil
+}
+
+func (h *handler) handleSignInit(req *body) (*body, error) {
+	// https://github.com/p11-glue/p11-kit/blob/0.24.0/p11-kit/rpc-client.c#L1467
+	var (
+		sessionID uint64
+		m         mechanism
+		keyID     uint64
+	)
+	req.readUlong(&sessionID)
+	req.readMechanism(&m)
+	req.readUlong(&keyID)
+	if err := req.err(); err != nil {
+		return nil, err
+	}
+	session, err := h.session(sessionID)
+	if err != nil {
+		return nil, err
+	}
+	obj, err := session.object(keyID)
+	if err != nil {
+		return nil, err
+	}
+	session.signMechanism = m
+	session.signObject = obj
+	return newResponse(req), nil
+}
+
+func (h *handler) handleSign(req *body) (*body, error) {
+	// https://github.com/p11-glue/p11-kit/blob/0.24.0/p11-kit/rpc-client.c#L1481
+	var (
+		sessionID uint64
+		data      []byte
+		dataLen   uint32
+		sigLen    uint32
+	)
+	req.readUlong(&sessionID)
+	req.readByteArray(&data, &dataLen)
+	req.readByteBuffer(&sigLen)
+	if err := req.err(); err != nil {
+		return nil, err
+	}
+	session, err := h.session(sessionID)
+	if err != nil {
+		return nil, err
+	}
+	sig, err := session.signObject.sign(session.signMechanism, data)
+	if err != nil {
+		return nil, err
+	}
+	resp := newResponse(req)
+	resp.writeByteArray(sig, uint32(len(sig)))
+	return resp, nil
+}
+
+func (h *handler) handleSignUpdate(req *body) (*body, error) {
+	// https://github.com/p11-glue/p11-kit/blob/0.24.0/p11-kit/rpc-client.c#L1500
+	var (
+		sessionID uint64
+		data      []byte
+		dataLen   uint32
+	)
+	req.readUlong(&sessionID)
+	req.readByteArray(&data, &dataLen)
+	if err := req.err(); err != nil {
+		return nil, err
+	}
+	session, err := h.session(sessionID)
+	if err != nil {
+		return nil, err
+	}
+	session.signData = append(session.signData, data...)
+	return newResponse(req), nil
+}
+
+func (h *handler) handleSignFinal(req *body) (*body, error) {
+	// https://github.com/p11-glue/p11-kit/blob/0.24.0/p11-kit/rpc-client.c#L1515
+	var (
+		sessionID uint64
+		sigLength uint32
+	)
+	req.readUlong(&sessionID)
+	req.readByteBuffer(&sigLength)
+	if err := req.err(); err != nil {
+		return nil, err
+	}
+	session, err := h.session(sessionID)
+	if err != nil {
+		return nil, err
+	}
+	data, err := session.signObject.sign(session.signMechanism, session.signData)
+	if err != nil {
+		return nil, err
+	}
+	resp := newResponse(req)
+	resp.writeByteArray(data, uint32(len(data)))
 	return resp, nil
 }
 

@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"crypto"
+	"crypto/rsa"
+	"crypto/sha256"
 	"crypto/x509"
 	"encoding/pem"
 	"net"
@@ -179,10 +181,10 @@ func newTestServer(t *testing.T) *Server {
 
 	rsaCertObj.SetLabel("foo")
 	rsaPubObj.SetLabel("foo")
-	rsaPrivObj.SetLabel("foo")
-	ecdsaCertObj.SetLabel("foo")
-	ecdsaPubObj.SetLabel("foo")
-	ecdsaPrivObj.SetLabel("foo")
+	rsaPrivObj.SetLabel("fookey")
+	ecdsaCertObj.SetLabel("bar")
+	ecdsaPubObj.SetLabel("bar")
+	ecdsaPrivObj.SetLabel("bar")
 
 	objects := []Object{
 		rsaCertObj,
@@ -229,14 +231,51 @@ func newTestServer(t *testing.T) *Server {
 
 func TestPKCS11Tool(t *testing.T) {
 	testRequiresP11Tools(t)
+	tempDir := t.TempDir()
+	inData := filepath.Join(tempDir, "sign-in")
+	outData := filepath.Join(tempDir, "sign-out")
+
+	// Create an ASN.1 DigestInfo object.
+
+	digest := sha256.Sum256([]byte("hello, world"))
+	digestInfo := append([]byte{
+		0x30, 0x31, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86,
+		0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x01, 0x05,
+		0x00, 0x04, 0x20,
+	}, digest[:]...)
+	if err := os.WriteFile(inData, digestInfo, 0644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
 
 	tests := []struct {
-		name string
-		args []string
+		name  string
+		args  []string
+		after func(t *testing.T)
 	}{
-		{"ListSlots", []string{"--list-slots"}},
-		{"ListTokenSlots", []string{"--list-token-slots"}},
-		{"ListObjects", []string{"--list-objects"}},
+		{"ListSlots", []string{"--list-slots"}, nil},
+		{"ListTokenSlots", []string{"--list-token-slots"}, nil},
+		{"ListObjects", []string{"--list-objects"}, nil},
+		{"Sign", []string{
+			"--sign",
+			"--type=privkey",
+			"--label=fookey",
+			"--input-file=" + inData,
+			"--output-file=" + outData,
+			"-m", "RSA-PKCS",
+		}, func(t *testing.T) {
+			obj := parsePub(t, testRSAPrivKey)
+			pub, ok := obj.pub.(*rsa.PublicKey)
+			if !ok {
+				t.Fatalf("object doesn't contain public key")
+			}
+			sig, err := os.ReadFile(outData)
+			if err != nil {
+				t.Fatalf("read file: %v", err)
+			}
+			if err := rsa.VerifyPKCS1v15(pub, crypto.SHA256, digest[:], sig); err != nil {
+				t.Errorf("failed to verify signature: %v", err)
+			}
+		}},
 	}
 
 	for _, test := range tests {
@@ -289,6 +328,9 @@ func TestPKCS11Tool(t *testing.T) {
 			}
 			if err := <-errCh; err != nil {
 				t.Errorf("handle error: %v", err)
+			}
+			if test.after != nil {
+				test.after(t)
 			}
 		})
 	}

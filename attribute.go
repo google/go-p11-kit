@@ -1,6 +1,7 @@
 package p11kit
 
 import (
+	"bytes"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -21,7 +22,17 @@ type Object struct {
 	attributes []attribute
 
 	pub  crypto.PublicKey
-	priv crypto.PrivateKey
+	priv crypto.Signer
+}
+
+func (o *Object) matches(tmpl attribute) bool {
+	for _, a := range o.attributes {
+		if a.typ != tmpl.typ {
+			break
+		}
+		return bytes.Equal(a.value(), tmpl.value())
+	}
+	return false
 }
 
 func (o *Object) SetLabel(label string) {
@@ -37,6 +48,59 @@ func (o *Object) attributeValue(typ attributeType) (attribute, bool) {
 		}
 	}
 	return attribute{}, false
+}
+
+func (o *Object) sign(m mechanism, data []byte) ([]byte, error) {
+	if o.priv == nil {
+		return nil, ErrKeyHandleInvalid // Object isn't a private key.
+	}
+
+	switch m.typ {
+	case ckmRSAPKCS:
+		return signRSAPKCS(o.priv, m, data)
+	case ckmRSAPKCSPSS:
+		return nil, ErrMechanismInvalid
+	case ckmECDSA:
+		return nil, ErrMechanismInvalid
+	default:
+		return nil, ErrMechanismInvalid
+	}
+}
+
+var hashLengths = map[int]crypto.Hash{
+	crypto.SHA256.Size(): crypto.SHA256,
+	crypto.SHA384.Size(): crypto.SHA384,
+	crypto.SHA512.Size(): crypto.SHA512,
+}
+
+// These are ASN1 DER structures:
+//   DigestInfo ::= SEQUENCE {
+//     digestAlgorithm AlgorithmIdentifier,
+//     digest OCTET STRING
+//   }
+//
+// For performance, we don't use the generic ASN1 encoder. Rather, we
+// precompute a prefix of the digest value that makes a valid ASN1 DER string
+// with the correct contents.
+var hashPrefixes = map[crypto.Hash][]byte{
+	crypto.SHA224: {0x30, 0x2d, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x04, 0x05, 0x00, 0x04, 0x1c},
+	crypto.SHA256: {0x30, 0x31, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x01, 0x05, 0x00, 0x04, 0x20},
+	crypto.SHA384: {0x30, 0x41, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x02, 0x05, 0x00, 0x04, 0x30},
+	crypto.SHA512: {0x30, 0x51, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x03, 0x05, 0x00, 0x04, 0x40},
+}
+
+func signRSAPKCS(priv crypto.Signer, m mechanism, data []byte) ([]byte, error) {
+	// https://docs.oasis-open.org/pkcs11/pkcs11-curr/v2.40/errata01/os/pkcs11-curr-v2.40-errata01-os-complete.html#_Toc228894635
+	if len(m.params) != 0 {
+		return nil, fmt.Errorf("CKM_RSA_PKCS does not take any parameters: %w", ErrArgumentsBad)
+	}
+	for hash, prefix := range hashPrefixes {
+		if !bytes.HasPrefix(data, prefix) {
+			continue
+		}
+		return priv.Sign(rand.Reader, bytes.TrimPrefix(data, prefix), hash)
+	}
+	return nil, fmt.Errorf("unrecognized hash data: %w", ErrArgumentsBad)
 }
 
 const (
@@ -106,7 +170,7 @@ func NewPrivateKeyObject(priv crypto.PrivateKey) (Object, error) {
 	if err != nil {
 		return Object{}, err
 	}
-	return Object{id: id, attributes: attrs, priv: priv}, nil
+	return Object{id: id, attributes: attrs, priv: signer}, nil
 }
 
 func NewPublicKeyObject(pub crypto.PublicKey) (Object, error) {
@@ -154,6 +218,7 @@ func newKeyObject(pub crypto.PublicKey, isPrivate bool) ([]attribute, error) {
 	if isPrivate {
 		attrs = append(attrs,
 			attribute{typ: attributeExtractable, byte: bFalse}, // CKA_EXTRACTABLE
+			attribute{typ: attributeSign, byte: bTrue},         // CKA_SIGN
 		)
 	}
 
@@ -249,6 +314,31 @@ func NewX509CertificateObject(cert *x509.Certificate) (Object, error) {
 			{typ: attributeValue, bytes: cert.Raw},            // CKA_VALUE
 		},
 	}, nil
+}
+
+const (
+	// https://github.com/Pkcs11Interop/PKCS11-SPECS/blob/master/v2.20/headers/pkcs11t.h
+	ckmRSAPKCS    = 0x00000001
+	ckmRSAPKCSPSS = 0x0000000D
+	ckmECDSA      = 0x00001041
+)
+
+var mechanismToString = map[uint32]string{
+	ckmRSAPKCS:    "CKM_RSA_PKCS",
+	ckmRSAPKCSPSS: "CKM_RSA_PKCS_PSS",
+	ckmECDSA:      "CKM_ECDSA",
+}
+
+type mechanism struct {
+	typ    uint32
+	params []byte
+}
+
+func (m mechanism) String() string {
+	if s, ok := mechanismToString[m.typ]; ok {
+		return s
+	}
+	return fmt.Sprintf("CK_MECHANISM_TYPE(0x%08x)", m.typ)
 }
 
 // attribute represents a PKCS #11 attribute, a typed object with optional value.

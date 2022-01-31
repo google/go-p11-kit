@@ -344,6 +344,10 @@ func (b *buffer) byteArray(a *[]byte) bool {
 	if !b.uint32(&n) {
 		return false
 	}
+	if n == 0xffffffff {
+		// https://github.com/p11-glue/p11-kit/blob/0.24.1/p11-kit/rpc-message.c#L730
+		return true
+	}
 	if len(b.b) < int(n) {
 		return false
 	}
@@ -389,10 +393,12 @@ const (
 	sigAttributeBuffer = "fA"
 	sigByte            = "y"
 	sigByteArray       = "ay"
+	sigByteBuffer      = "fy"
+	sigMechanism       = "M"
+	sigString          = "s"
 	sigUlong           = "u"
 	sigUlongArray      = "au"
 	sigUlongBuffer     = "fu"
-	sigString          = "s"
 	sigVersion         = "v"
 )
 
@@ -575,6 +581,20 @@ func (b *body) readUlong(n *uint64) {
 func (b *body) readUlongBuffer(count *uint32) {
 	b.decode(sigUlongBuffer, func() bool {
 		return b.buffer.uint32(count)
+	})
+}
+
+// https://github.com/p11-glue/p11-kit/blob/0.24.0/p11-kit/rpc-message.c#L358
+func (b *body) readByteBuffer(count *uint32) {
+	b.decode(sigByteBuffer, func() bool {
+		return b.buffer.uint32(count)
+	})
+}
+
+// https://github.com/p11-glue/p11-kit/blob/0.24.0/p11-kit/rpc-message.c#L1559
+func (b *body) readMechanism(m *mechanism) {
+	b.decode(sigMechanism, func() bool {
+		return b.buffer.uint32(&m.typ) && b.buffer.byteArray(&m.params)
 	})
 }
 
