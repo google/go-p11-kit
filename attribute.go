@@ -28,19 +28,19 @@ type Object struct {
 
 func (o *Object) supports(m mechanism) error {
 	if o.priv == nil {
-		return fmt.Errorf("object is not a private key: %w", ErrMechanismInvalid)
+		return fmt.Errorf("object is not a private key: %w", errMechanismInvalid)
 	}
 	switch o.priv.Public().(type) {
 	case *ecdsa.PublicKey:
 		if m.typ == ckmECDSA {
 			return nil
 		}
-		return fmt.Errorf("ECDSA key doesn't support mechanism 0x%08x: %w", m.typ, ErrMechanismInvalid)
+		return fmt.Errorf("ECDSA key doesn't support mechanism 0x%08x: %w", m.typ, errMechanismInvalid)
 	case *rsa.PublicKey:
 		if m.typ == ckmRSAPKCS || m.typ == ckmRSAPKCSPSS {
 			return nil
 		}
-		return fmt.Errorf("RSA key doesn't support mechanism 0x%08x: %w", m.typ, ErrMechanismInvalid)
+		return fmt.Errorf("RSA key doesn't support mechanism 0x%08x: %w", m.typ, errMechanismInvalid)
 	default:
 		return fmt.Errorf("private key is neither RSA or ECDSA: %T", o.priv.Public())
 	}
@@ -75,7 +75,7 @@ func (o *Object) attributeValue(typ attributeType) (attribute, bool) {
 
 func (o *Object) sign(m mechanism, data []byte) ([]byte, error) {
 	if o.priv == nil {
-		return nil, ErrKeyHandleInvalid // Object isn't a private key.
+		return nil, fmt.Errorf("object isn't a private key: %w", errKeyHandleInvalid)
 	}
 
 	switch m.typ {
@@ -86,7 +86,7 @@ func (o *Object) sign(m mechanism, data []byte) ([]byte, error) {
 	case ckmECDSA:
 		return signECDSA(o.priv, m, data)
 	default:
-		return nil, ErrMechanismInvalid
+		return nil, errMechanismInvalid
 	}
 }
 
@@ -99,7 +99,7 @@ var hashLengths = map[int]crypto.Hash{
 func signECDSA(priv crypto.Signer, m mechanism, data []byte) ([]byte, error) {
 	// http://docs.oasis-open.org/pkcs11/pkcs11-curr/v2.40/errata01/os/pkcs11-curr-v2.40-errata01-os-complete.html#_Toc441850452
 	if !m.noParams() {
-		return nil, fmt.Errorf("CKM_ECDSA does not take any parameters: %w", ErrArgumentsBad)
+		return nil, fmt.Errorf("CKM_ECDSA does not take any parameters: %w", errArgumentsBad)
 	}
 	return priv.Sign(rand.Reader, data, crypto.Hash(0))
 }
@@ -123,7 +123,7 @@ var hashPrefixes = map[crypto.Hash][]byte{
 func signRSAPKCS(priv crypto.Signer, m mechanism, data []byte) ([]byte, error) {
 	// https://docs.oasis-open.org/pkcs11/pkcs11-curr/v2.40/errata01/os/pkcs11-curr-v2.40-errata01-os-complete.html#_Toc228894635
 	if !m.noParams() {
-		return nil, fmt.Errorf("CKM_RSA_PKCS does not take any parameters: %w", ErrArgumentsBad)
+		return nil, fmt.Errorf("CKM_RSA_PKCS does not take any parameters: %w", errArgumentsBad)
 	}
 	for hash, prefix := range hashPrefixes {
 		if !bytes.HasPrefix(data, prefix) {
@@ -131,7 +131,7 @@ func signRSAPKCS(priv crypto.Signer, m mechanism, data []byte) ([]byte, error) {
 		}
 		return priv.Sign(rand.Reader, bytes.TrimPrefix(data, prefix), hash)
 	}
-	return nil, fmt.Errorf("unrecognized hash data: %w", ErrArgumentsBad)
+	return nil, fmt.Errorf("unrecognized hash data: %w", errArgumentsBad)
 }
 
 func signRSAPKCSPSS(priv crypto.Signer, m mechanism, data []byte) ([]byte, error) {
@@ -155,10 +155,10 @@ func signRSAPKCSPSS(priv crypto.Signer, m mechanism, data []byte) ([]byte, error
 		hash = crypto.SHA512
 		mgf = ckgMGF1SHA512
 	default:
-		return nil, fmt.Errorf("unsupported hash algorithm 0x%08x: %w", p.hashAlg, ErrMechanismParamInvalid)
+		return nil, fmt.Errorf("unsupported hash algorithm 0x%08x: %w", p.hashAlg, errMechanismParamInvalid)
 	}
 	if mgf != p.mgf {
-		return nil, fmt.Errorf("provided mgf 0x%08x doesn't match provided hash %s: %w", p.mgf, hash, ErrMechanismParamInvalid)
+		return nil, fmt.Errorf("provided mgf 0x%08x doesn't match provided hash %s: %w", p.mgf, hash, errMechanismParamInvalid)
 	}
 	opts := &rsa.PSSOptions{
 		SaltLength: int(p.saltLen),

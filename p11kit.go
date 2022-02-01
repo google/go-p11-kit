@@ -9,18 +9,18 @@ import (
 	"math"
 )
 
-// Error represents a PKCS #11 return code.
-type Error uint64
+// pkcs11Error represents a PKCS #11 return code.
+type pkcs11Error uint64
 
-var errStrings = map[Error]string{
-	ErrSlotIDInvalid:        "invalid slot ID",
-	ErrGeneralError:         "general error",
-	ErrArgumentsBad:         "invalid function arguments",
-	ErrFunctionNotSupported: "function not supported",
+var errStrings = map[pkcs11Error]string{
+	errSlotIDInvalid:        "invalid slot ID",
+	errGeneralError:         "general error",
+	errArgumentsBad:         "invalid function arguments",
+	errFunctionNotSupported: "function not supported",
 }
 
 // Error returns a human readable message of the PKCS #11 return code.
-func (e Error) Error() string {
+func (e pkcs11Error) Error() string {
 	if s, ok := errStrings[e]; ok {
 		return s
 	}
@@ -31,94 +31,94 @@ func (e Error) Error() string {
 //
 // http://docs.oasis-open.org/pkcs11/pkcs11-base/v2.40/csd02/pkcs11-base-v2.40-csd02.html#_Toc385435538
 const (
-	ErrCancel                        Error = 0x00000001
-	ErrHostMemory                    Error = 0x00000002
-	ErrSlotIDInvalid                 Error = 0x00000003
-	ErrGeneralError                  Error = 0x00000005
-	ErrFunctionFailed                Error = 0x00000006
-	ErrArgumentsBad                  Error = 0x00000007
-	ErrNoEvent                       Error = 0x00000008
-	ErrNeedToCreateThreads           Error = 0x00000009
-	ErrCantLock                      Error = 0x0000000a
-	ErrAttributeReadOnly             Error = 0x00000010
-	ErrAttributeSensitive            Error = 0x00000011
-	ErrAttributeTypeInvalid          Error = 0x00000012
-	ErrAttributeValueInvalid         Error = 0x00000013
-	ErrCopyProhibited                Error = 0x0000001a
-	ErrActionProhibited              Error = 0x0000001b
-	ErrDataInvalid                   Error = 0x00000020
-	ErrDataLenRange                  Error = 0x00000021
-	ErrDeviceError                   Error = 0x00000030
-	ErrDeviceMemory                  Error = 0x00000031
-	ErrDeviceRemoved                 Error = 0x00000032
-	ErrEncryptedDataInvalid          Error = 0x00000040
-	ErrEncryptedDataLenRange         Error = 0x00000041
-	ErrFunctionCanceled              Error = 0x00000050
-	ErrFunctionNotParallel           Error = 0x00000051
-	ErrFunctionNotSupported          Error = 0x00000054
-	ErrKeyHandleInvalid              Error = 0x00000060
-	ErrKeySizeRange                  Error = 0x00000062
-	ErrKeyTypeInconsistent           Error = 0x00000063
-	ErrKeyNotNeeded                  Error = 0x00000064
-	ErrKeyChanged                    Error = 0x00000065
-	ErrKeyNeeded                     Error = 0x00000066
-	ErrKeyIndigestible               Error = 0x00000067
-	ErrKeyFunctionNotPermitted       Error = 0x00000068
-	ErrKeyNotWrappable               Error = 0x00000069
-	ErrKeyUnextractable              Error = 0x0000006a
-	ErrMechanismInvalid              Error = 0x00000070
-	ErrMechanismParamInvalid         Error = 0x00000071
-	ErrObjectHandleInvalid           Error = 0x00000082
-	ErrOperationActive               Error = 0x00000090
-	ErrOperationNotInitialized       Error = 0x00000091
-	ErrPINIncorrect                  Error = 0x000000a0
-	ErrPINInvalid                    Error = 0x000000a1
-	ErrPINLenRange                   Error = 0x000000a2
-	ErrPINExpired                    Error = 0x000000a3
-	ErrPINLocked                     Error = 0x000000a4
-	ErrSessionClosed                 Error = 0x000000b0
-	ErrSessionCount                  Error = 0x000000b1
-	ErrSessionHandleInvalid          Error = 0x000000b3
-	ErrSessionParallelNotSupported   Error = 0x000000b4
-	ErrSessionReadOnly               Error = 0x000000b5
-	ErrSessionExists                 Error = 0x000000b6
-	ErrSessionReadOnlyExists         Error = 0x000000b7
-	ErrSessionReadWriteSoExists      Error = 0x000000b8
-	ErrSignatureInvalid              Error = 0x000000c0
-	ErrSignatureLenRange             Error = 0x000000c1
-	ErrTemplateIncomplete            Error = 0x000000d0
-	ErrTemplateInconsistent          Error = 0x000000d1
-	ErrTokenNotPresent               Error = 0x000000e0
-	ErrTokenNotRecognized            Error = 0x000000e1
-	ErrTokenWriteProtected           Error = 0x000000e2
-	ErrUnwrappingKeyHandleInvalid    Error = 0x000000f0
-	ErrUnwrappingKeySizeRange        Error = 0x000000f1
-	ErrUnwrappingKeyTypeInconsistent Error = 0x000000f2
-	ErrUserAlreadyLoggedIn           Error = 0x00000100
-	ErrUserNotLoggedIn               Error = 0x00000101
-	ErrUserPINNotInitialized         Error = 0x00000102
-	ErrUserTypeInvalid               Error = 0x00000103
-	ErrUserAnotherAlreadyLoggedIn    Error = 0x00000104
-	ErrUserTooManyTypes              Error = 0x00000105
-	ErrWrappedKeyInvalid             Error = 0x00000110
-	ErrWrappedKeyLenRange            Error = 0x00000112
-	ErrWrappingKeyHandleInvalid      Error = 0x00000113
-	ErrWrappingKeySizeRange          Error = 0x00000114
-	ErrWrappingKeyTypeInconsistent   Error = 0x00000115
-	ErrRandomSeedNotSupported        Error = 0x00000120
-	ErrRandomNoRNG                   Error = 0x00000121
-	ErrDomainParamsInvalid           Error = 0x00000130
-	ErrCurveNotSupported             Error = 0x00000140
-	ErrBufferTooSmall                Error = 0x00000150
-	ErrSavedStateInvalid             Error = 0x00000160
-	ErrInformationSensitive          Error = 0x00000170
-	ErrStateUnsaveable               Error = 0x00000180
-	ErrCryptokiNotInitialized        Error = 0x00000190
-	ErrCryptokiAlreadyInitialized    Error = 0x00000191
-	ErrMutexBad                      Error = 0x000001a0
-	ErrMutexNotLocked                Error = 0x000001a1
-	ErrFunctionRejected              Error = 0x00000200
-	ErrVendorDefined                 Error = 0x80000000
+	errCancel                        pkcs11Error = 0x00000001
+	errHostMemory                    pkcs11Error = 0x00000002
+	errSlotIDInvalid                 pkcs11Error = 0x00000003
+	errGeneralError                  pkcs11Error = 0x00000005
+	errFunctionFailed                pkcs11Error = 0x00000006
+	errArgumentsBad                  pkcs11Error = 0x00000007
+	errNoEvent                       pkcs11Error = 0x00000008
+	errNeedToCreateThreads           pkcs11Error = 0x00000009
+	errCantLock                      pkcs11Error = 0x0000000a
+	errAttributeReadOnly             pkcs11Error = 0x00000010
+	errAttributeSensitive            pkcs11Error = 0x00000011
+	errAttributeTypeInvalid          pkcs11Error = 0x00000012
+	errAttributeValueInvalid         pkcs11Error = 0x00000013
+	errCopyProhibited                pkcs11Error = 0x0000001a
+	errActionProhibited              pkcs11Error = 0x0000001b
+	errDataInvalid                   pkcs11Error = 0x00000020
+	errDataLenRange                  pkcs11Error = 0x00000021
+	errDeviceError                   pkcs11Error = 0x00000030
+	errDeviceMemory                  pkcs11Error = 0x00000031
+	errDeviceRemoved                 pkcs11Error = 0x00000032
+	errEncryptedDataInvalid          pkcs11Error = 0x00000040
+	errEncryptedDataLenRange         pkcs11Error = 0x00000041
+	errFunctionCanceled              pkcs11Error = 0x00000050
+	errFunctionNotParallel           pkcs11Error = 0x00000051
+	errFunctionNotSupported          pkcs11Error = 0x00000054
+	errKeyHandleInvalid              pkcs11Error = 0x00000060
+	errKeySizeRange                  pkcs11Error = 0x00000062
+	errKeyTypeInconsistent           pkcs11Error = 0x00000063
+	errKeyNotNeeded                  pkcs11Error = 0x00000064
+	errKeyChanged                    pkcs11Error = 0x00000065
+	errKeyNeeded                     pkcs11Error = 0x00000066
+	errKeyIndigestible               pkcs11Error = 0x00000067
+	errKeyFunctionNotPermitted       pkcs11Error = 0x00000068
+	errKeyNotWrappable               pkcs11Error = 0x00000069
+	errKeyUnextractable              pkcs11Error = 0x0000006a
+	errMechanismInvalid              pkcs11Error = 0x00000070
+	errMechanismParamInvalid         pkcs11Error = 0x00000071
+	errObjectHandleInvalid           pkcs11Error = 0x00000082
+	errOperationActive               pkcs11Error = 0x00000090
+	errOperationNotInitialized       pkcs11Error = 0x00000091
+	errPINIncorrect                  pkcs11Error = 0x000000a0
+	errPINInvalid                    pkcs11Error = 0x000000a1
+	errPINLenRange                   pkcs11Error = 0x000000a2
+	errPINExpired                    pkcs11Error = 0x000000a3
+	errPINLocked                     pkcs11Error = 0x000000a4
+	errSessionClosed                 pkcs11Error = 0x000000b0
+	errSessionCount                  pkcs11Error = 0x000000b1
+	errSessionHandleInvalid          pkcs11Error = 0x000000b3
+	errSessionParallelNotSupported   pkcs11Error = 0x000000b4
+	errSessionReadOnly               pkcs11Error = 0x000000b5
+	errSessionExists                 pkcs11Error = 0x000000b6
+	errSessionReadOnlyExists         pkcs11Error = 0x000000b7
+	errSessionReadWriteSoExists      pkcs11Error = 0x000000b8
+	errSignatureInvalid              pkcs11Error = 0x000000c0
+	errSignatureLenRange             pkcs11Error = 0x000000c1
+	errTemplateIncomplete            pkcs11Error = 0x000000d0
+	errTemplateInconsistent          pkcs11Error = 0x000000d1
+	errTokenNotPresent               pkcs11Error = 0x000000e0
+	errTokenNotRecognized            pkcs11Error = 0x000000e1
+	errTokenWriteProtected           pkcs11Error = 0x000000e2
+	errUnwrappingKeyHandleInvalid    pkcs11Error = 0x000000f0
+	errUnwrappingKeySizeRange        pkcs11Error = 0x000000f1
+	errUnwrappingKeyTypeInconsistent pkcs11Error = 0x000000f2
+	errUserAlreadyLoggedIn           pkcs11Error = 0x00000100
+	errUserNotLoggedIn               pkcs11Error = 0x00000101
+	errUserPINNotInitialized         pkcs11Error = 0x00000102
+	errUserTypeInvalid               pkcs11Error = 0x00000103
+	errUserAnotherAlreadyLoggedIn    pkcs11Error = 0x00000104
+	errUserTooManyTypes              pkcs11Error = 0x00000105
+	errWrappedKeyInvalid             pkcs11Error = 0x00000110
+	errWrappedKeyLenRange            pkcs11Error = 0x00000112
+	errWrappingKeyHandleInvalid      pkcs11Error = 0x00000113
+	errWrappingKeySizeRange          pkcs11Error = 0x00000114
+	errWrappingKeyTypeInconsistent   pkcs11Error = 0x00000115
+	errRandomSeedNotSupported        pkcs11Error = 0x00000120
+	errRandomNoRNG                   pkcs11Error = 0x00000121
+	errDomainParamsInvalid           pkcs11Error = 0x00000130
+	errCurveNotSupported             pkcs11Error = 0x00000140
+	errBufferTooSmall                pkcs11Error = 0x00000150
+	errSavedStateInvalid             pkcs11Error = 0x00000160
+	errInformationSensitive          pkcs11Error = 0x00000170
+	errStateUnsaveable               pkcs11Error = 0x00000180
+	errCryptokiNotInitialized        pkcs11Error = 0x00000190
+	errCryptokiAlreadyInitialized    pkcs11Error = 0x00000191
+	errMutexBad                      pkcs11Error = 0x000001a0
+	errMutexNotLocked                pkcs11Error = 0x000001a1
+	errFunctionRejected              pkcs11Error = 0x00000200
+	errVendorDefined                 pkcs11Error = 0x80000000
 )
 
 // Version of the spec this package aims to implement.
@@ -235,23 +235,23 @@ func (h *handler) newSession(slotID uint64) (uint64, error) {
 
 func (h *handler) session(id uint64) (*session, error) {
 	if len(h.sessions) == 0 {
-		return nil, ErrSessionHandleInvalid
+		return nil, errSessionHandleInvalid
 	}
 	s, ok := h.sessions[id]
 	if !ok {
-		return nil, ErrSessionHandleInvalid
+		return nil, errSessionHandleInvalid
 	}
 	return s, nil
 }
 
 func (h *handler) closeSession(id uint64) error {
 	if len(h.sessions) == 0 {
-		return ErrSessionHandleInvalid
+		return errSessionHandleInvalid
 	}
 	_, ok := h.sessions[id]
 	delete(h.sessions, id)
 	if !ok {
-		return ErrSessionHandleInvalid
+		return errSessionHandleInvalid
 	}
 	return nil
 }
@@ -291,7 +291,7 @@ func (s *session) object(objectID uint64) (Object, error) {
 			return obj, nil
 		}
 	}
-	return Object{}, ErrObjectHandleInvalid
+	return Object{}, errObjectHandleInvalid
 }
 
 func (s *session) find(sessionID uint64, tmpl []attribute) error {
@@ -357,12 +357,12 @@ func (s *Handler) Handle(rw io.ReadWriter) error {
 		if h, ok := handlers[req.call]; ok {
 			resp, err = h(req)
 		} else {
-			err = ErrFunctionNotSupported
+			err = errFunctionNotSupported
 		}
 		if err != nil {
 			// TODO(ericchiang): refector so the logger is configured by Handler.
 			log.Printf("Error with %s: %v", req.call, err)
-			var cerr Error
+			var cerr pkcs11Error
 			if !errors.As(err, &cerr) {
 				return fmt.Errorf("%d failed: %v", req.call, err)
 			}
@@ -476,7 +476,7 @@ func (h *handler) slot(id uint64) (Slot, error) {
 		}
 	}
 
-	return Slot{}, ErrSlotIDInvalid
+	return Slot{}, errSlotIDInvalid
 }
 
 func (h *handler) handleGetSlotInfo(req *body) (*body, error) {
@@ -522,7 +522,7 @@ func (h *handler) handleGetSlotList(req *body) (*body, error) {
 	if n == 0 {
 		resp.writeUlongArray(nil, uint32(len(h.s.Slots)))
 	} else if int(n) < len(h.s.Slots) {
-		return nil, ErrBufferTooSmall
+		return nil, errBufferTooSmall
 	} else {
 		sli := make([]uint64, len(h.s.Slots))
 		for i, slot := range h.s.Slots {
@@ -546,7 +546,7 @@ func (h *handler) handleOpenSession(req *body) (*body, error) {
 
 	// Check for CKF_SERIAL_SESSION.
 	if (flags & 0x00000004) == 0 {
-		return nil, ErrSessionParallelNotSupported
+		return nil, errSessionParallelNotSupported
 	}
 
 	sessionID, err := h.newSession(slotID)
