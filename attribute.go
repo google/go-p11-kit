@@ -26,6 +26,26 @@ type Object struct {
 	priv crypto.Signer
 }
 
+func (o *Object) supports(m mechanism) error {
+	if o.priv == nil {
+		return fmt.Errorf("object is not a private key: %w", ErrMechanismInvalid)
+	}
+	switch o.priv.Public().(type) {
+	case *ecdsa.PublicKey:
+		if m.typ == ckmECDSA {
+			return nil
+		}
+		return fmt.Errorf("ECDSA key doesn't support mechanism 0x%08x: %w", m.typ, ErrMechanismInvalid)
+	case *rsa.PublicKey:
+		if m.typ == ckmRSAPKCS || m.typ == ckmRSAPKCSPSS {
+			return nil
+		}
+		return fmt.Errorf("RSA key doesn't support mechanism 0x%08x: %w", m.typ, ErrMechanismInvalid)
+	default:
+		return fmt.Errorf("private key is neither RSA or ECDSA: %T", o.priv.Public())
+	}
+}
+
 func (o *Object) matches(tmpl attribute) bool {
 	for _, a := range o.attributes {
 		if a.typ != tmpl.typ {
@@ -64,7 +84,7 @@ func (o *Object) sign(m mechanism, data []byte) ([]byte, error) {
 	case ckmRSAPKCSPSS:
 		return signRSAPKCSPSS(o.priv, m, data)
 	case ckmECDSA:
-		return nil, ErrMechanismInvalid
+		return signECDSA(o.priv, m, data)
 	default:
 		return nil, ErrMechanismInvalid
 	}
@@ -74,6 +94,14 @@ var hashLengths = map[int]crypto.Hash{
 	crypto.SHA256.Size(): crypto.SHA256,
 	crypto.SHA384.Size(): crypto.SHA384,
 	crypto.SHA512.Size(): crypto.SHA512,
+}
+
+func signECDSA(priv crypto.Signer, m mechanism, data []byte) ([]byte, error) {
+	// http://docs.oasis-open.org/pkcs11/pkcs11-curr/v2.40/errata01/os/pkcs11-curr-v2.40-errata01-os-complete.html#_Toc441850452
+	if !m.noParams() {
+		return nil, fmt.Errorf("CKM_ECDSA does not take any parameters: %w", ErrArgumentsBad)
+	}
+	return priv.Sign(rand.Reader, data, crypto.Hash(0))
 }
 
 // These are ASN1 DER structures:

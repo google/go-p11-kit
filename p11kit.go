@@ -681,6 +681,9 @@ func (h *handler) handleSignInit(req *body) (*body, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := obj.supports(m); err != nil {
+		return nil, err
+	}
 	session.signMechanism = m
 	session.signObject = obj
 	return newResponse(req), nil

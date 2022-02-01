@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto"
+	"crypto/ecdsa"
 	"crypto/rsa"
 	"crypto/sha256"
 	"crypto/x509"
@@ -184,12 +185,14 @@ func newTestServer(t *testing.T) *Handler {
 	rsaPrivObj.SetLabel("fookey")
 	ecdsaCertObj.SetLabel("bar")
 	ecdsaPubObj.SetLabel("bar")
-	ecdsaPrivObj.SetLabel("bar")
+	ecdsaPrivObj.SetLabel("barkey")
 
 	objects := []Object{
 		rsaCertObj,
 		rsaPubObj,
 		rsaPrivObj,
+	}
+	objects2 := []Object{
 		ecdsaCertObj,
 		ecdsaPubObj,
 		ecdsaPrivObj,
@@ -223,7 +226,7 @@ func newTestServer(t *testing.T) *Handler {
 				Serial:          "serial-0x02",
 				HardwareVersion: hwVersion,
 				FirmwareVersion: fwVersion,
-				Objects:         objects,
+				Objects:         objects2,
 			},
 		},
 	}
@@ -253,6 +256,12 @@ func TestPKCS11Tool(t *testing.T) {
 		t.Fatalf("write file: %v", err)
 	}
 
+	inECDSAData := filepath.Join(tempDir, "sign-ecdsa-in")
+	outECDSAData := filepath.Join(tempDir, "sign-ecdsa-out")
+	if err := os.WriteFile(inECDSAData, digest[:], 0644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
 	tests := []struct {
 		name  string
 		args  []string
@@ -263,7 +272,7 @@ func TestPKCS11Tool(t *testing.T) {
 		{"ListObjects", []string{"--list-objects"}, nil},
 		{"Sign", []string{
 			"--sign",
-			"--type=privkey",
+			"--slot=0x01",
 			"--label=fookey",
 			"--input-file=" + inData,
 			"--output-file=" + outData,
@@ -284,7 +293,7 @@ func TestPKCS11Tool(t *testing.T) {
 		}},
 		{"SignPSS", []string{
 			"--sign",
-			"--type=privkey",
+			"--slot=0x01",
 			"--label=fookey",
 			"--input-file=" + inPSSData,
 			"--output-file=" + outPSSData,
@@ -302,6 +311,26 @@ func TestPKCS11Tool(t *testing.T) {
 			}
 			if err := rsa.VerifyPSS(pub, crypto.SHA256, digest[:], sig, nil); err != nil {
 				t.Errorf("failed to verify signature: %v", err)
+			}
+		}},
+		{"SignECDSA", []string{
+			"--sign",
+			"--slot=0x02",
+			"--input-file=" + inECDSAData,
+			"--output-file=" + outECDSAData,
+			"-m", "ECDSA",
+		}, func(t *testing.T) {
+			obj := parsePub(t, testECDSAPrivKey)
+			pub, ok := obj.pub.(*ecdsa.PublicKey)
+			if !ok {
+				t.Fatalf("object doesn't contain public key")
+			}
+			sig, err := os.ReadFile(outECDSAData)
+			if err != nil {
+				t.Fatalf("read file: %v", err)
+			}
+			if !ecdsa.VerifyASN1(pub, digest[:], sig) {
+				t.Errorf("failed to verify signature")
 			}
 		}},
 	}
