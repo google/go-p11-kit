@@ -247,6 +247,12 @@ func TestPKCS11Tool(t *testing.T) {
 		t.Fatalf("write file: %v", err)
 	}
 
+	inPSSData := filepath.Join(tempDir, "sign-pss-in")
+	outPSSData := filepath.Join(tempDir, "sign-pss-out")
+	if err := os.WriteFile(inPSSData, digest[:], 0644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
 	tests := []struct {
 		name  string
 		args  []string
@@ -273,6 +279,28 @@ func TestPKCS11Tool(t *testing.T) {
 				t.Fatalf("read file: %v", err)
 			}
 			if err := rsa.VerifyPKCS1v15(pub, crypto.SHA256, digest[:], sig); err != nil {
+				t.Errorf("failed to verify signature: %v", err)
+			}
+		}},
+		{"SignPSS", []string{
+			"--sign",
+			"--type=privkey",
+			"--label=fookey",
+			"--input-file=" + inPSSData,
+			"--output-file=" + outPSSData,
+			"-m", "RSA-PKCS-PSS",
+			"--hash-algorithm=SHA256",
+		}, func(t *testing.T) {
+			obj := parsePub(t, testRSAPrivKey)
+			pub, ok := obj.pub.(*rsa.PublicKey)
+			if !ok {
+				t.Fatalf("object doesn't contain public key")
+			}
+			sig, err := os.ReadFile(outPSSData)
+			if err != nil {
+				t.Fatalf("read file: %v", err)
+			}
+			if err := rsa.VerifyPSS(pub, crypto.SHA256, digest[:], sig, nil); err != nil {
 				t.Errorf("failed to verify signature: %v", err)
 			}
 		}},

@@ -62,7 +62,7 @@ func (o *Object) sign(m mechanism, data []byte) ([]byte, error) {
 	case ckmRSAPKCS:
 		return signRSAPKCS(o.priv, m, data)
 	case ckmRSAPKCSPSS:
-		return nil, ErrMechanismInvalid
+		return signRSAPKCSPSS(o.priv, m, data)
 	case ckmECDSA:
 		return nil, ErrMechanismInvalid
 	default:
@@ -94,7 +94,7 @@ var hashPrefixes = map[crypto.Hash][]byte{
 
 func signRSAPKCS(priv crypto.Signer, m mechanism, data []byte) ([]byte, error) {
 	// https://docs.oasis-open.org/pkcs11/pkcs11-curr/v2.40/errata01/os/pkcs11-curr-v2.40-errata01-os-complete.html#_Toc228894635
-	if len(m.params) != 0 {
+	if !m.noParams() {
 		return nil, fmt.Errorf("CKM_RSA_PKCS does not take any parameters: %w", ErrArgumentsBad)
 	}
 	for hash, prefix := range hashPrefixes {
@@ -104,6 +104,39 @@ func signRSAPKCS(priv crypto.Signer, m mechanism, data []byte) ([]byte, error) {
 		return priv.Sign(rand.Reader, bytes.TrimPrefix(data, prefix), hash)
 	}
 	return nil, fmt.Errorf("unrecognized hash data: %w", ErrArgumentsBad)
+}
+
+func signRSAPKCSPSS(priv crypto.Signer, m mechanism, data []byte) ([]byte, error) {
+	// http://docs.oasis-open.org/pkcs11/pkcs11-curr/v2.40/cs01/pkcs11-curr-v2.40-cs01.html#_Toc228894638
+	p, ok := m.params.(rsaPKCSPSSParams)
+	if !ok {
+		return nil, fmt.Errorf("expected PSS params, got %T", m.params)
+	}
+	var (
+		mgf  uint64
+		hash crypto.Hash
+	)
+	switch p.hashAlg {
+	case ckmSHA256:
+		hash = crypto.SHA256
+		mgf = ckgMGF1SHA256
+	case ckmSHA384:
+		hash = crypto.SHA384
+		mgf = ckgMGF1SHA384
+	case ckmSHA512:
+		hash = crypto.SHA512
+		mgf = ckgMGF1SHA512
+	default:
+		return nil, fmt.Errorf("unsupported hash algorithm 0x%08x: %w", p.hashAlg, ErrMechanismParamInvalid)
+	}
+	if mgf != p.mgf {
+		return nil, fmt.Errorf("provided mgf 0x%08x doesn't match provided hash %s: %w", p.mgf, hash, ErrMechanismParamInvalid)
+	}
+	opts := &rsa.PSSOptions{
+		SaltLength: int(p.saltLen),
+		Hash:       hash,
+	}
+	return priv.Sign(rand.Reader, data, opts)
 }
 
 const (
@@ -331,6 +364,13 @@ const (
 	ckmRSAPKCS    = 0x00000001
 	ckmRSAPKCSPSS = 0x0000000D
 	ckmECDSA      = 0x00001041
+	ckmSHA256     = 0x00000250
+	ckmSHA384     = 0x00000260
+	ckmSHA512     = 0x00000270
+
+	ckgMGF1SHA256 = 0x00000002
+	ckgMGF1SHA384 = 0x00000003
+	ckgMGF1SHA512 = 0x00000004
 )
 
 var mechanismToString = map[uint32]string{
@@ -341,7 +381,18 @@ var mechanismToString = map[uint32]string{
 
 type mechanism struct {
 	typ    uint32
-	params []byte
+	params interface{}
+}
+
+func (m mechanism) noParams() bool {
+	b, ok := m.params.([]byte)
+	return ok && len(b) == 0
+}
+
+type rsaPKCSPSSParams struct {
+	hashAlg uint64
+	mgf     uint64
+	saltLen uint64
 }
 
 func (m mechanism) String() string {

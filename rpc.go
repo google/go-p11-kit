@@ -2,6 +2,7 @@ package p11kit
 
 import (
 	"encoding/binary"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"strconv"
@@ -410,7 +411,7 @@ func (b *body) err() error {
 		return fmt.Errorf("trailing elements: %s", b.signature)
 	}
 	if b.buffer.len() != 0 {
-		return fmt.Errorf("trailing data: %d bytes", b.buffer.len())
+		return fmt.Errorf("trailing data: %d bytes:\n%s", b.buffer.len(), hex.Dump(b.buffer.bytes()))
 	}
 	return nil
 }
@@ -594,7 +595,29 @@ func (b *body) readByteBuffer(count *uint32) {
 // https://github.com/p11-glue/p11-kit/blob/0.24.0/p11-kit/rpc-message.c#L1559
 func (b *body) readMechanism(m *mechanism) {
 	b.decode(sigMechanism, func() bool {
-		return b.buffer.uint32(&m.typ) && b.buffer.byteArray(&m.params)
+		if !b.buffer.uint32(&m.typ) {
+			return false
+		}
+
+		switch m.typ {
+		case ckmRSAPKCSPSS:
+			// https://github.com/p11-glue/p11-kit/blob/0.24.0/p11-kit/rpc-message.c#L1315
+			var p rsaPKCSPSSParams
+			if !b.buffer.uint64(&p.hashAlg) ||
+				!b.buffer.uint64(&p.mgf) ||
+				!b.buffer.uint64(&p.saltLen) {
+				return false
+			}
+			m.params = p
+		default:
+			var p []byte
+			if !b.buffer.byteArray(&p) {
+				return false
+			}
+			m.params = p
+		}
+		return true
+
 	})
 }
 
