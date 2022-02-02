@@ -1,0 +1,29 @@
+name: test
+on: 
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  test:
+    strategy:
+      matrix:
+        os: [ubuntu-latest]
+        go-version: [1.17.x, 1.17.x]
+    runs-on: ${{ matrix.os }}
+    steps:
+    - name: Install Go
+      uses: actions/setup-go@v2
+      with:
+        go-version: ${{ matrix.go-version }}
+    - name: Checkout code
+      uses: actions/checkout@v2
+    - name: Install p11-kit and pkcs11-tool
+      run: sudo apt-get update -y && sudo apt-get install -y p11-kit opensc
+    - name: Build
+      run: go build ./...
+    - name: Test
+      run: go test ./...
