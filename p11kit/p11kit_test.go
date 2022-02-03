@@ -284,6 +284,7 @@ func TestPKCS11Tool(t *testing.T) {
 		{"ListSlots", []string{"--list-slots"}, nil},
 		{"ListTokenSlots", []string{"--list-token-slots"}, nil},
 		{"ListObjects", []string{"--list-objects"}, nil},
+		{"ListMechanisms", []string{"--list-mechanisms"}, nil},
 		{"Sign", []string{
 			"--sign",
 			"--slot=0x01",
