@@ -63,7 +63,7 @@ func (o *Object) supports(m mechanism) error {
 func (o *Object) matches(tmpl attribute) bool {
 	for _, a := range o.attributes {
 		if a.typ != tmpl.typ {
-			break
+			continue
 		}
 		return bytes.Equal(a.value(), tmpl.value())
 	}
@@ -458,16 +458,6 @@ type attribute struct {
 type attributeTemplate struct {
 	typ attributeType
 	len uint32
-}
-
-// setBytes decodes the value of the attribute into a byte array, returning if
-// the operation was successful.
-func (a attribute) setBytes(b []byte) bool {
-	if a.bytes == nil {
-		return false
-	}
-	b = a.bytes
-	return true
 }
 
 // setDate decodes the value of the attribute into a CK_DATE value, returning if
