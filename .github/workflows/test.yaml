@@ -23,7 +23,11 @@ jobs:
       uses: actions/checkout@v2
     - name: Install p11-kit and pkcs11-tool
       run: sudo apt-get update -y && sudo apt-get install -y p11-kit opensc
+    - name: Install staticcheck
+      run: go install honnef.co/go/tools/cmd/staticcheck@2020.2.1
     - name: Build
       run: go build ./...
     - name: Test
       run: go test -v ./...
+    - name: staticcheck
+      run: staticcheck ./...

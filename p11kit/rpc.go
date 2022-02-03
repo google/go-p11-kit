@@ -457,7 +457,6 @@ func (b *body) decode(sig string, fn func() bool) {
 		return
 	}
 	b.error = io.ErrUnexpectedEOF
-	return
 }
 
 // https://github.com/p11-glue/p11-kit/blob/0.24.0/p11-kit/rpc-message.c#L278
