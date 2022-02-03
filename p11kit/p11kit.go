@@ -92,18 +92,6 @@ type Version struct {
 	Minor byte
 }
 
-// Info holds general information about the PKCS #11 module.
-//
-// This corresponds to CK_INFO.
-type Info struct {
-	CryptokiVersion Version
-	Manufacturer    string // Limit of 32 bytes
-	Library         string // Limit of 32 bytes
-	LibraryVersion  Version
-
-	// Flags is ignored since "bit flags reserved for future versions.  MUST be zero for this version"
-}
-
 // Slot is a logical grouping of objects, such as private keys and certificates.
 type Slot struct {
 	// ID is the unique identifier for the slot. It MUST be unique.
