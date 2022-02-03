@@ -116,6 +116,39 @@ type Slot struct {
 	GetObjects func() ([]Object, error)
 }
 
+func (s Slot) mechanisms() []uint64 {
+	// TODO(ericchiang): Allow this to be configured through the slot
+	// struct if the private key doesn't support things like RSA-PKCS-PSS.
+	return []uint64{
+		ckmRSAPKCS, ckmRSAPKCSPSS, ckmECDSA,
+	}
+}
+
+// https://docs.oasis-open.org/pkcs11/pkcs11-base/v2.40/os/pkcs11-base-v2.40-os.html#_Toc235002264
+const (
+	ckfHW      = 0x00000001
+	ckfEncrypt = 0x00000100
+	ckfDecrypt = 0x00000200
+	ckfSign    = 0x00000800
+	ckfVerify  = 0x00002000
+)
+
+func (s Slot) mechanismInfo(m uint64) (minSize, maxSize, flags uint64, err error) {
+	// Max size is chosen arbitrarily.
+	//
+	// TODO(ericchiang): Support decrypt, encrypt, and verify.
+	switch m {
+	case ckmRSAPKCS:
+		return 0, 2 << 24, ckfHW | ckfSign, nil
+	case ckmRSAPKCSPSS:
+		return 0, 2 << 24, ckfHW | ckfSign, nil
+	case ckmECDSA:
+		return 0, 2 << 24, ckfHW | ckfSign, nil
+	default:
+		return 0, 0, 0, errMechanismInvalid
+	}
+}
+
 // Handler implements a server for the p11-kit PRC protocol.
 type Handler struct {
 	// Manufacturer of the module. Limited to 32 bytes.
@@ -283,6 +316,8 @@ func (s *Handler) Handle(rw io.ReadWriter) error {
 		callGetSlotList:       h.handleGetSlotList,
 		callGetTokenInfo:      h.handleGetTokenInfo,
 		callGetSlotInfo:       h.handleGetSlotInfo,
+		callGetMechanismList:  h.handleGetMechanismList,
+		callGetMechanismInfo:  h.handleGetMechanismInfo,
 		callOpenSession:       h.handleOpenSession,
 		callCloseSession:      h.handleCloseSession,
 		callFindObjectsInit:   h.handleFindObjectsInit,
@@ -450,6 +485,59 @@ func (h *handler) handleGetSlotInfo(req *body) (*body, error) {
 	resp.writeUlong(flags)
 	resp.writeVersion(slot.HardwareVersion)
 	resp.writeVersion(slot.FirmwareVersion)
+	return resp, nil
+}
+
+func (h *handler) handleGetMechanismList(req *body) (*body, error) {
+	// https://github.com/p11-glue/p11-kit/blob/0.24.0/p11-kit/rpc-client.c#L919
+	var (
+		slotID uint64
+		count  uint32
+	)
+	req.readUlong(&slotID)
+	req.readUlongBuffer(&count)
+	if err := req.err(); err != nil {
+		return nil, err
+	}
+
+	slot, err := h.slot(slotID)
+	if err != nil {
+		return nil, err
+	}
+	m := slot.mechanisms()
+	n := uint32(len(m))
+	resp := newResponse(req)
+	if count == 0 {
+		resp.writeUlongArray(nil, n)
+	} else if count < n {
+		return nil, errBufferTooSmall
+	} else {
+		resp.writeUlongArray(m, n)
+	}
+	return resp, nil
+}
+
+func (h *handler) handleGetMechanismInfo(req *body) (*body, error) {
+	// https://github.com/p11-glue/p11-kit/blob/0.24.0/p11-kit/rpc-client.c#L935
+	var slotID, mechanism uint64
+	req.readUlong(&slotID)
+	req.readUlong(&mechanism)
+	if err := req.err(); err != nil {
+		return nil, err
+	}
+
+	slot, err := h.slot(slotID)
+	if err != nil {
+		return nil, err
+	}
+	minSize, maxSize, flags, err := slot.mechanismInfo(mechanism)
+	if err != nil {
+		return nil, err
+	}
+	resp := newResponse(req)
+	resp.writeUlong(minSize)
+	resp.writeUlong(maxSize)
+	resp.writeUlong(flags)
 	return resp, nil
 }
 
