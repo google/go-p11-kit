@@ -29,7 +29,7 @@ import (
 )
 
 func usage() {
-	fmt.Fprint(os.Stderr, `Usage: example-p11-kit-server [flags]
+	fmt.Fprint(os.Stderr, `Usage: example-p11-kit-server [flags] [unix socket path]
 
 An example p11-kit server that can serve on disk files as a PKCS #11 module.
 
@@ -83,7 +83,13 @@ func main() {
 		return nil
 	})
 	flag.Parse()
-	if len(flag.Args()) != 0 {
+
+	var unixPath string
+	switch len(flag.Args()) {
+	case 0:
+	case 1:
+		unixPath = flag.Args()[0]
+	default:
 		usage()
 		os.Exit(1)
 	}
@@ -168,13 +174,15 @@ func main() {
 		Slots:          []p11kit.Slot{slot},
 	}
 
-	tempDir, err := os.MkdirTemp("", "")
-	if err != nil {
-		log.Fatalf("Creating temp directory: %v", err)
-	}
-	defer os.RemoveAll(tempDir)
+	if unixPath == "" {
+		tempDir, err := os.MkdirTemp("", "")
+		if err != nil {
+			log.Fatalf("Creating temp directory: %v", err)
+		}
+		defer os.RemoveAll(tempDir)
 
-	unixPath := filepath.Join(tempDir, "p11kit.sock")
+		unixPath = filepath.Join(tempDir, "p11kit.sock")
+	}
 
 	l, err := net.Listen("unix", unixPath)
 	if err != nil {
