@@ -350,7 +350,7 @@ func newKeyObject(pub crypto.PublicKey, isPrivate bool) ([]attribute, error) {
 
 		// http://docs.oasis-open.org/pkcs11/pkcs11-curr/v2.40/errata01/os/pkcs11-curr-v2.40-errata01-os-complete.html#_Toc441850406
 		// http://docs.oasis-open.org/pkcs11/pkcs11-curr/v2.40/errata01/os/pkcs11-curr-v2.40-errata01-os-complete.html#_Toc441850407
-		size := uint64(pub.Size())
+		size := uint64(pub.Size() * 8)
 		e := big.NewInt(int64(pub.E))
 		keyType := ckkRSA
 		attrs = append(attrs,
