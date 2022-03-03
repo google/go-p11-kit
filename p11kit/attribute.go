@@ -78,6 +78,26 @@ func (o *Object) SetLabel(label string) {
 	})
 }
 
+// SetCertificate set certificate attributes to key object.
+// It will create the link between key and certificate.
+func (o *Object) SetCertificate(cert *x509.Certificate) error {
+	if o.pub == nil && o.priv == nil {
+		return fmt.Errorf("SetCertificate supports only PublicKey and PrivateKey object")
+	}
+
+	derSerial, err := asn1.Marshal(cert.SerialNumber)
+	if err != nil {
+		return err
+	}
+	attrs := []attribute{
+		{typ: attributeID, bytes: derSerial},            // CKA_ID
+		{typ: attributeSubject, bytes: cert.RawSubject}, // CKA_SUBJECT
+		{typ: attributeObjectID, bytes: derSerial},      // CKA_OBJECT_ID
+	}
+	o.attributes = append(o.attributes, attrs...)
+	return nil
+}
+
 func (o *Object) attributeValue(typ attributeType) (attribute, bool) {
 	for _, a := range o.attributes {
 		if a.typ == typ {
@@ -387,16 +407,26 @@ func NewX509CertificateObject(cert *x509.Certificate) (Object, error) {
 	}
 	// http://docs.oasis-open.org/pkcs11/pkcs11-base/v2.40/os/pkcs11-base-v2.40-os.html#_Toc416959711
 	// http://docs.oasis-open.org/pkcs11/pkcs11-base/v2.40/os/pkcs11-base-v2.40-os.html#_Toc416959712
+	derSerial, err := asn1.Marshal(cert.SerialNumber)
+	if err != nil {
+		return Object{}, err
+	}
+
 	certType := ckcX509
 	objectClass := ckoCertificate
 	return Object{
 		id: id,
 		attributes: []attribute{
+			{typ: attributeToken, byte: bTrue},                // CKA_TOKEN
 			{typ: attributeClass, ulong: &objectClass},        // CKA_CLASS
 			{typ: attributeCertificateType, ulong: &certType}, // CKA_CERTIFICATE_TYPE
 			{typ: attributeSubject, bytes: cert.RawSubject},   // CKA_SUBJECT
 			{typ: attributeIssuer, bytes: cert.RawIssuer},     // CKA_ISSUER
 			{typ: attributeValue, bytes: cert.Raw},            // CKA_VALUE
+			{typ: attributeID, bytes: derSerial},              // CKA_ID (should match pubKey and privKey's ID)
+			{typ: attributeSerialNumber, bytes: derSerial},    // CKA_SERIAL_NUMBER
+			{typ: attributeStartDate, date: &cert.NotBefore},  // CKA_START_DATE
+			{typ: attributeEndDate, date: &cert.NotAfter},     // CKA_END_DATE
 		},
 	}, nil
 }
