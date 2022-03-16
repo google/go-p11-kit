@@ -135,7 +135,42 @@ func signECDSA(priv crypto.Signer, m mechanism, data []byte) ([]byte, error) {
 	if !m.noParams() {
 		return nil, fmt.Errorf("CKM_ECDSA does not take any parameters: %w", errArgumentsBad)
 	}
-	return priv.Sign(rand.Reader, data, crypto.Hash(0))
+	sig, err := priv.Sign(rand.Reader, data, crypto.Hash(0))
+	if err != nil {
+		return nil, err
+	}
+
+	// PKCS11 use raw R, S value as signature, priv.Sign return a DER encoded R, S sequence
+	// convert DER sequence to raw R, S
+	// http://docs.oasis-open.org/pkcs11/pkcs11-curr/v2.40/cs01/pkcs11-curr-v2.40-cs01.html#_Toc399398879
+	var sigDecode struct {
+		R *big.Int
+		S *big.Int
+	}
+	if _, err := asn1.Unmarshal(sig, &sigDecode); err != nil {
+		return nil, err
+	}
+
+	// Padding, both big.Int and PKCS#11 signature are big-endian
+	pub, ok := priv.Public().(*ecdsa.PublicKey)
+	if !ok {
+		return nil, fmt.Errorf("expected ecdsa public key, got %T", priv.Public())
+	}
+	size := (pub.Params().N.BitLen() + 7) / 8 // round up
+
+	// Ensure size is big enough
+	if n := sigDecode.R.BitLen(); n > size*8 {
+		return nil, fmt.Errorf("value R is too large, expected %d bits got %d", size*8, n)
+	}
+	if n := sigDecode.S.BitLen(); n > size*8 {
+		return nil, fmt.Errorf("value S is too large, expected %d bits got %d", size*8, n)
+	}
+
+	sig = make([]byte, size*2)
+	sigDecode.R.FillBytes(sig[:size])
+	sigDecode.S.FillBytes(sig[size:])
+
+	return sig, nil
 }
 
 // These are ASN1 DER structures:
@@ -852,3 +887,4 @@ var attributeString = map[attributeType]string{
 	attributeAllowedMechanisms:      "CKA_ALLOWED_MECHANISMS",
 	attributeVendorDefined:          "CKA_VENDOR_DEFINED",
 }
+
