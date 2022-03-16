@@ -22,7 +22,9 @@ import (
 	"crypto/rsa"
 	"crypto/sha256"
 	"crypto/x509"
+	"encoding/asn1"
 	"encoding/pem"
+	"math/big"
 	"net"
 	"os"
 	"os/exec"
@@ -344,7 +346,18 @@ func TestPKCS11Tool(t *testing.T) {
 			if err != nil {
 				t.Fatalf("read file: %v", err)
 			}
-			if !ecdsa.VerifyASN1(pub, digest[:], sig) {
+			sigLen := len(sig)
+			var r, s big.Int
+			r.SetBytes(sig[:sigLen/2])
+			s.SetBytes(sig[sigLen/2:])
+
+			sequence := []*big.Int{&r, &s}
+			derSig, err := asn1.Marshal(sequence)
+			if err != nil {
+				t.Fatalf("parse signature: %v", err)
+			}
+
+			if !ecdsa.VerifyASN1(pub, digest[:], derSig) {
 				t.Errorf("failed to verify signature")
 			}
 		}},
@@ -407,3 +420,4 @@ func TestPKCS11Tool(t *testing.T) {
 		})
 	}
 }
+
