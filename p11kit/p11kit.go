@@ -73,6 +73,7 @@
 package p11kit
 
 import (
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"io"
@@ -318,6 +319,8 @@ func (s *Handler) Handle(rw io.ReadWriter) error {
 		callGetSlotInfo:       h.handleGetSlotInfo,
 		callGetMechanismList:  h.handleGetMechanismList,
 		callGetMechanismInfo:  h.handleGetMechanismInfo,
+		callGenerateRandom:    h.handleGenerateRandom,
+		callSeedRandom:        h.handleSeedRandom,
 		callOpenSession:       h.handleOpenSession,
 		callCloseSession:      h.handleCloseSession,
 		callFindObjectsInit:   h.handleFindObjectsInit,
@@ -539,6 +542,44 @@ func (h *handler) handleGetMechanismInfo(req *body) (*body, error) {
 	resp.writeUlong(maxSize)
 	resp.writeUlong(flags)
 	return resp, nil
+}
+
+func (h *handler) handleGenerateRandom(req *body) (*body, error) {
+	// https://github.com/p11-glue/p11-kit/blob/0.24.0/p11-kit/rpc-client.c#L1843
+
+	// We don't actually want to support C_GenerateRandom, but some clients may
+	// blindly use it without checking the return value. This function still reports
+	// that we don't have a RNG, but fills the provided bytes with random data from
+	// /dev/urandom anyway in order to provide protection for a client that doesn't
+	// properly check the C_GenerateRandom return value.
+
+	var (
+		sessionID  uint64
+		randomData []byte
+		randomLen  uint32
+	)
+	req.readUlong(&sessionID)
+	req.readByteArray(&randomData, &randomLen)
+
+	if err := req.err(); err != nil {
+		return nil, err
+	}
+
+	_, err := rand.Read(randomData)
+	if err != nil {
+		return nil, err
+	}
+
+	return nil, errRandomNoRNG
+}
+
+func (h *handler) handleSeedRandom(req *body) (*body, error) {
+	// https://github.com/p11-glue/p11-kit/blob/0.24.0/p11-kit/rpc-client.c#L1830
+
+	// We don't actually want to support C_SeedRandom. This function just reports
+	// that credkit has no RNG.
+
+	return nil, errRandomNoRNG
 }
 
 func (h *handler) handleGetSlotList(req *body) (*body, error) {
