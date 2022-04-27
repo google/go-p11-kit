@@ -20,6 +20,7 @@ import (
 	"encoding/pem"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"os"
@@ -35,9 +36,10 @@ An example p11-kit server that can serve on disk files as a PKCS #11 module.
 
 Flags:
 
-    --cert Path to a file containing a PEM encoded certificate.
-    --priv Path to a file containing a PEM encoded private key.
-    --pub  Path to a file containing a PEM encoded public key.
+    --cert  Path to a file containing a PEM encoded certificate.
+    --priv  Path to a file containing a PEM encoded private key.
+    --pub   Path to a file containing a PEM encoded public key.
+    --stdio Serve a single connection over stdio, intended for p11-kit's 'remote' module entries.
 
 `)
 }
@@ -82,6 +84,7 @@ func main() {
 		pubFiles = append(pubFiles, file)
 		return nil
 	})
+	stdio := flag.Bool("stdio", false, "Serve a single connection over stdio.")
 	flag.Parse()
 
 	var unixPath string
@@ -172,6 +175,17 @@ func main() {
 		Library:        "example-server",
 		LibraryVersion: p11kit.Version{Major: 0, Minor: 1},
 		Slots:          []p11kit.Slot{slot},
+	}
+
+	if *stdio {
+		rw := struct {
+			io.Reader
+			io.Writer
+		}{os.Stdin, os.Stdout}
+		if err := h.Handle(&rw); err != nil {
+			log.Fatalf("Handling over stdio: %v", err)
+		}
+		os.Exit(0)
 	}
 
 	if unixPath == "" {
