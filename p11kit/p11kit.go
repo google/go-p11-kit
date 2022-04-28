@@ -209,6 +209,7 @@ func (h *handler) newSession(slotID uint64) (uint64, error) {
 
 	h.sessions[nextSessionID] = &session{
 		objects: objects,
+		slotID:  slotID,
 	}
 	return nextSessionID, nil
 }
@@ -245,6 +246,8 @@ type session struct {
 	signMechanism mechanism
 	signObject    Object
 	signData      []byte
+
+	slotID uint64
 }
 
 func (s *session) attributeValue(objectID uint64, tmpl []attributeTemplate) ([]attribute, error) {
@@ -330,6 +333,7 @@ func (s *Handler) Handle(rw io.ReadWriter) error {
 		callSign:              h.handleSign,
 		callSignUpdate:        h.handleSignUpdate,
 		callSignFinal:         h.handleSignFinal,
+		callGetSessionInfo:    h.handleGetSessionInfo,
 	}
 
 	for !done {
@@ -812,6 +816,34 @@ func (h *handler) handleSignFinal(req *body) (*body, error) {
 	}
 	resp := newResponse(req)
 	resp.writeByteArray(data, uint32(len(data)))
+	return resp, nil
+}
+
+func (h *handler) handleGetSessionInfo(req *body) (*body, error) {
+	// https://github.com/p11-glue/p11-kit/blob/0.24.0/p11-kit/rpc-client.c#L1018
+	var (
+		sessionID uint64
+	)
+	req.readUlong(&sessionID)
+	if err := req.err(); err != nil {
+		return nil, err
+	}
+	session, err := h.session(sessionID)
+	if err != nil {
+		return nil, err
+	}
+
+	// http://docs.oasis-open.org/pkcs11/pkcs11-base/v2.40/os/pkcs11-base-v2.40-os.html#_Toc416959688
+	var flags uint64
+	flags |= 0x00000004 // CKF_SERIAL_SESSION
+
+	var state uint64 = 1 // CKS_RO_USER_FUNCTIONS
+
+	resp := newResponse(req)
+	resp.writeUlong(session.slotID) // slotID
+	resp.writeUlong(state)          // state
+	resp.writeUlong(flags)          // flags
+	resp.writeUlong(0)              // ulDeviceError
 	return resp, nil
 }
 
