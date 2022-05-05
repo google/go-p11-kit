@@ -250,22 +250,28 @@ type session struct {
 	slotID uint64
 }
 
-func (s *session) attributeValue(objectID uint64, tmpl []attributeTemplate) ([]attribute, error) {
+// attributeValue returns the attribute values for the provided objectID and
+// template. It also returns a bool that's true if all of the attribute types
+// were valid, which allows for returning CKR_ATTRIBUTE_TYPE_INVALID if one or
+// more were not valid.
+func (s *session) attributeValue(objectID uint64, tmpl []attributeTemplate) ([]attribute, bool, error) {
 	o, err := s.object(objectID)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 
+	allValid := true
 	var attrs []attribute
 	for _, t := range tmpl {
 		a, ok := o.attributeValue(t.typ)
 		if !ok {
 			attrs = append(attrs, attribute{typ: t.typ})
+			allValid = false
 			continue
 		}
 		attrs = append(attrs, a)
 	}
-	return attrs, nil
+	return attrs, allValid, nil
 }
 
 func (s *session) object(objectID uint64) (Object, error) {
@@ -707,7 +713,7 @@ func (h *handler) handleGetAttributeValue(req *body) (*body, error) {
 	if err != nil {
 		return nil, err
 	}
-	arr, err := s.attributeValue(objectID, attrs)
+	arr, allValid, err := s.attributeValue(objectID, attrs)
 	if err != nil {
 		return nil, err
 	}
@@ -715,7 +721,13 @@ func (h *handler) handleGetAttributeValue(req *body) (*body, error) {
 	resp := newResponse(req)
 	resp.writeAttributeArray(arr)
 	// https://github.com/p11-glue/p11-kit/blob/0.24.1/p11-kit/rpc-server.c#L361
-	resp.writeUlong(0)
+	if allValid {
+		resp.writeUlong(0)
+	} else {
+		// PKCS#11 spec indicates that if *any* of the template values are invalid
+		// then we should return CKR_ATTRIBUTE_TYPE_INVALID.
+		resp.writeUlong(uint64(errAttributeTypeInvalid))
+	}
 	return resp, nil
 }
 
