@@ -78,9 +78,12 @@ func (o *Object) SetLabel(label string) {
 	})
 }
 
-// SetCertificate set certificate attributes to key object.
-// It will create the link between key and certificate.
+// SetCertificate associates a public or private key with a certificate. This is
+// required for many clients to know which key corresponds to which certificate.
+//
+// This method will return an error if the object isn't a public or private key.
 func (o *Object) SetCertificate(cert *x509.Certificate) error {
+	// TODO(#26): Do we need to support intermediate certificates as well?
 	if o.pub == nil && o.priv == nil {
 		return fmt.Errorf("SetCertificate supports only PublicKey and PrivateKey object")
 	}
@@ -293,6 +296,9 @@ var (
 // NewPrivateKeyObject creates a PKCS #11 object from a private key.
 //
 // priv is expected to implement crypto.Signer, and optionally crypto.Decrypter.
+//
+// If the key is associated with a certificate, call SetCertificate on the
+// returned object to link them.
 func NewPrivateKeyObject(priv crypto.PrivateKey) (Object, error) {
 	signer, ok := priv.(crypto.Signer)
 	if !ok {
@@ -312,6 +318,9 @@ func NewPrivateKeyObject(priv crypto.PrivateKey) (Object, error) {
 // NewPublicKeyObject creates a PKCS #11 object from a public key.
 //
 // pub must be of underlying type *ecdsa.PublicKey or *rsa.PublicKey.
+//
+// If the key is associated with a certificate, call SetCertificate on the
+// returned object to link them.
 func NewPublicKeyObject(pub crypto.PublicKey) (Object, error) {
 	id, err := newObjectID()
 	if err != nil {
@@ -887,4 +896,3 @@ var attributeString = map[attributeType]string{
 	attributeAllowedMechanisms:      "CKA_ALLOWED_MECHANISMS",
 	attributeVendorDefined:          "CKA_VENDOR_DEFINED",
 }
-
