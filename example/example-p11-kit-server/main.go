@@ -64,6 +64,25 @@ func parsePublicKey(b *pem.Block) (crypto.PublicKey, error) {
 	}
 }
 
+func privEqual(priv crypto.PrivateKey, pub interface{}) bool {
+	// https://pkg.go.dev/crypto#PrivateKey
+	p, ok := priv.(interface {
+		Public() crypto.PublicKey
+	})
+	return ok && pubEqual(p.Public(), pub)
+}
+
+func pubEqual(p1, p2 interface{}) bool {
+	// https://pkg.go.dev/crypto#PublicKey
+	pub, ok := p1.(interface {
+		Equal(x crypto.PublicKey) bool
+	})
+	if !ok {
+		return false
+	}
+	return pub.Equal(crypto.PublicKey(p2))
+}
+
 func main() {
 	flag.Usage = usage
 
@@ -98,6 +117,8 @@ func main() {
 	}
 
 	var objs []p11kit.Object
+
+	var certs []*x509.Certificate
 	for _, f := range certFiles {
 		data, err := os.ReadFile(f)
 		if err != nil {
@@ -111,6 +132,7 @@ func main() {
 		if err != nil {
 			log.Fatalf("Parsing certificate file %s: %v", f, err)
 		}
+		certs = append(certs, cert)
 		obj, err := p11kit.NewX509CertificateObject(cert)
 		if err != nil {
 			log.Fatalf("Creating object from certificate file %s: %v", f, err)
@@ -135,6 +157,14 @@ func main() {
 		if err != nil {
 			log.Fatalf("Creating object from private key file %s: %v", f, err)
 		}
+		for _, cert := range certs {
+			if !privEqual(priv, cert.PublicKey) {
+				continue
+			}
+			if err := obj.SetCertificate(cert); err != nil {
+				log.Fatalf("Unable to cert certificate attributes for private key: %v", err)
+			}
+		}
 		objs = append(objs, obj)
 	}
 
@@ -154,6 +184,14 @@ func main() {
 		obj, err := p11kit.NewPublicKeyObject(pub)
 		if err != nil {
 			log.Fatalf("Creating object from private key file %s: %v", f, err)
+		}
+		for _, cert := range certs {
+			if !pubEqual(pub, cert.PublicKey) {
+				continue
+			}
+			if err := obj.SetCertificate(cert); err != nil {
+				log.Fatalf("Unable to cert certificate attributes for public key: %v", err)
+			}
 		}
 		objs = append(objs, obj)
 	}
