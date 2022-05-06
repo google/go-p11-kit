@@ -133,7 +133,7 @@ v6PMfQMCIQCH3a31qlv3pnnG3jF4AGteFlvm/cAW/0Yzj7+nniUEyg==
 -----END CERTIFICATE-----`
 )
 
-func parseCert(t *testing.T, data string) Object {
+func parseCert(t *testing.T, data string) (Object, *x509.Certificate) {
 	t.Helper()
 	pemCert, _ := pem.Decode([]byte(data))
 	if pemCert == nil {
@@ -147,7 +147,7 @@ func parseCert(t *testing.T, data string) Object {
 	if err != nil {
 		t.Fatalf("Creating x509 certificate object: %v", err)
 	}
-	return certObj
+	return certObj, cert
 }
 
 func parsePub(t *testing.T, data string) Object {
@@ -189,12 +189,24 @@ func parsePriv(t *testing.T, data string) Object {
 }
 
 func newTestServer(t *testing.T) *Handler {
-	rsaCertObj := parseCert(t, testRSACert)
+	rsaCertObj, rsaCert := parseCert(t, testRSACert)
 	rsaPubObj := parsePub(t, testRSAPrivKey)
 	rsaPrivObj := parsePriv(t, testRSAPrivKey)
-	ecdsaCertObj := parseCert(t, testECDSACert)
+	if err := rsaPubObj.SetCertificate(rsaCert); err != nil {
+		t.Fatalf("rsaPubObject.SetCertificate failed: %v", err)
+	}
+	if err := rsaPrivObj.SetCertificate(rsaCert); err != nil {
+		t.Fatalf("rsaPrivObject.SetCertificate failed: %v", err)
+	}
+	ecdsaCertObj, ecdsaCert := parseCert(t, testECDSACert)
 	ecdsaPubObj := parsePub(t, testECDSAPrivKey)
 	ecdsaPrivObj := parsePriv(t, testECDSAPrivKey)
+	if err := ecdsaPubObj.SetCertificate(ecdsaCert); err != nil {
+		t.Fatalf("ecdsaPubObject.SetCertificate failed: %v", err)
+	}
+	if err := ecdsaPrivObj.SetCertificate(ecdsaCert); err != nil {
+		t.Fatalf("ecdsaPrivObject.SetCertificate failed: %v", err)
+	}
 
 	rsaCertObj.SetLabel("foo")
 	rsaPubObj.SetLabel("foo")
@@ -420,4 +432,3 @@ func TestPKCS11Tool(t *testing.T) {
 		})
 	}
 }
-
