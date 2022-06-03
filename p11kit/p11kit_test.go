@@ -207,6 +207,15 @@ func newTestServer(t *testing.T) *Handler {
 	if err := ecdsaPrivObj.SetCertificate(ecdsaCert); err != nil {
 		t.Fatalf("ecdsaPrivObject.SetCertificate failed: %v", err)
 	}
+	ecdsaCertObj2, ecdsaCert2 := parseCert(t, testECDSACert)
+	ecdsaPubObj2 := parsePub(t, testECDSAPrivKey)
+	ecdsaPrivObj2 := parsePriv(t, testECDSAPrivKey)
+	if err := ecdsaPubObj2.SetCertificate(ecdsaCert2); err != nil {
+		t.Fatalf("ecdsaPubObject.SetCertificate failed: %v", err)
+	}
+	if err := ecdsaPrivObj2.SetCertificate(ecdsaCert2); err != nil {
+		t.Fatalf("ecdsaPrivObject2.SetCertificate failed: %v", err)
+	}
 
 	rsaCertObj.SetLabel("foo")
 	rsaPubObj.SetLabel("foo")
@@ -214,6 +223,13 @@ func newTestServer(t *testing.T) *Handler {
 	ecdsaCertObj.SetLabel("bar")
 	ecdsaPubObj.SetLabel("bar")
 	ecdsaPrivObj.SetLabel("barkey")
+	ecdsaCertObj2.SetLabel("baz")
+	ecdsaPubObj2.SetLabel("baz")
+	ecdsaPrivObj2.SetLabel("bazkey")
+
+	ecdsaCertObj2.SetID(1)
+	ecdsaPubObj2.SetID(2)
+	ecdsaPrivObj2.SetID(3)
 
 	objects := []Object{
 		rsaCertObj,
@@ -224,6 +240,11 @@ func newTestServer(t *testing.T) *Handler {
 		ecdsaCertObj,
 		ecdsaPubObj,
 		ecdsaPrivObj,
+	}
+	objects3 := []Object{
+		ecdsaCertObj2,
+		ecdsaPubObj2,
+		ecdsaPrivObj2,
 	}
 
 	hwVersion := Version{0x01, 0x01}
@@ -255,6 +276,16 @@ func newTestServer(t *testing.T) *Handler {
 				HardwareVersion: hwVersion,
 				FirmwareVersion: fwVersion,
 				Objects:         objects2,
+			},
+			{
+				ID:              0x03,
+				Label:           "slot-0x03",
+				Manufacturer:    "test_man",
+				Model:           "test_model",
+				Serial:          "serial-0x03",
+				HardwareVersion: hwVersion,
+				FirmwareVersion: fwVersion,
+				Objects:         objects3,
 			},
 		},
 	}
