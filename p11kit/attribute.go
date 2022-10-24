@@ -102,9 +102,10 @@ func (o *Object) SetCertificate(cert *x509.Certificate) error {
 		return err
 	}
 	attrs := []attribute{
-		{typ: attributeID, bytes: derSerial},            // CKA_ID
-		{typ: attributeSubject, bytes: cert.RawSubject}, // CKA_SUBJECT
-		{typ: attributeObjectID, bytes: derSerial},      // CKA_OBJECT_ID
+		{typ: attributeID, bytes: derSerial},                               // CKA_ID
+		{typ: attributeSubject, bytes: cert.RawSubject},                    // CKA_SUBJECT
+		{typ: attributeObjectID, bytes: derSerial},                         // CKA_OBJECT_ID
+		{typ: attributePublicKeyInfo, bytes: cert.RawSubjectPublicKeyInfo}, // CKA_PUBLIC_KEY_INFO
 	}
 	o.attributes = append(o.attributes, attrs...)
 	return nil
@@ -186,15 +187,17 @@ func signECDSA(priv crypto.Signer, m mechanism, data []byte) ([]byte, error) {
 }
 
 // These are ASN1 DER structures:
-//   DigestInfo ::= SEQUENCE {
-//     digestAlgorithm AlgorithmIdentifier,
-//     digest OCTET STRING
-//   }
+//
+//	DigestInfo ::= SEQUENCE {
+//	  digestAlgorithm AlgorithmIdentifier,
+//	  digest OCTET STRING
+//	}
 //
 // For performance, we don't use the generic ASN1 encoder. Rather, we
 // precompute a prefix of the digest value that makes a valid ASN1 DER string
 // with the correct contents.
 var hashPrefixes = map[crypto.Hash][]byte{
+	crypto.SHA1:   {0x30, 0x21, 0x30, 0x09, 0x06, 0x05, 0x2b, 0x0e, 0x03, 0x02, 0x1a, 0x05, 0x00, 0x04, 0x14},
 	crypto.SHA224: {0x30, 0x2d, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x04, 0x05, 0x00, 0x04, 0x1c},
 	crypto.SHA256: {0x30, 0x31, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x01, 0x05, 0x00, 0x04, 0x20},
 	crypto.SHA384: {0x30, 0x41, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x02, 0x05, 0x00, 0x04, 0x30},
@@ -282,19 +285,18 @@ func newObjectID() (uint64, error) {
 
 // RFC 5480, 2.1.1.1. Named Curve
 //
-// secp224r1 OBJECT IDENTIFIER ::= {
-//   iso(1) identified-organization(3) certicom(132) curve(0) 33 }
+//	secp224r1 OBJECT IDENTIFIER ::= {
+//	  iso(1) identified-organization(3) certicom(132) curve(0) 33 }
 //
-// secp256r1 OBJECT IDENTIFIER ::= {
-//   iso(1) member-body(2) us(840) ansi-X9-62(10045) curves(3)
-//   prime(1) 7 }
+//	secp256r1 OBJECT IDENTIFIER ::= {
+//	  iso(1) member-body(2) us(840) ansi-X9-62(10045) curves(3)
+//	  prime(1) 7 }
 //
-// secp384r1 OBJECT IDENTIFIER ::= {
-//   iso(1) identified-organization(3) certicom(132) curve(0) 34 }
+//	secp384r1 OBJECT IDENTIFIER ::= {
+//	  iso(1) identified-organization(3) certicom(132) curve(0) 34 }
 //
-// secp521r1 OBJECT IDENTIFIER ::= {
-//   iso(1) identified-organization(3) certicom(132) curve(0) 35 }
-//
+//	secp521r1 OBJECT IDENTIFIER ::= {
+//	  iso(1) identified-organization(3) certicom(132) curve(0) 35 }
 var (
 	oidNamedCurveP224 = asn1.ObjectIdentifier{1, 3, 132, 0, 33}
 	oidNamedCurveP256 = asn1.ObjectIdentifier{1, 2, 840, 10045, 3, 1, 7}
@@ -369,13 +371,21 @@ func newKeyObject(pub crypto.PublicKey, isPrivate bool) ([]attribute, error) {
 		{typ: attributeClass, ulong: &objectClass},  // CKA_CLASS
 		{typ: attributeVerifyRecover, byte: bFalse}, // CKA_VERIFY_RECOVER
 		{typ: attributeWrap, byte: bFalse},          // CKA_WRAP
+		{typ: attributeDerive, byte: bFalse},        // CKA_DERIVE
 		{typ: attributeVerify, byte: verify},        // CKA_VERIFY
+		{typ: attributeLocal, byte: bFalse},         // CKA_LOCAL
 	}
 
 	if isPrivate {
 		attrs = append(attrs,
-			attribute{typ: attributeExtractable, byte: bFalse}, // CKA_EXTRACTABLE
-			attribute{typ: attributeSign, byte: bTrue},         // CKA_SIGN
+			attribute{typ: attributeToken, byte: bTrue},               // CKA_TOKEN
+			attribute{typ: attributeSensitive, byte: bTrue},           // CKA_SENSITIVE
+			attribute{typ: attributeAlwaysSensitive, byte: bTrue},     // CKA_ALWAYS_SENSITIVE
+			attribute{typ: attributeExtractable, byte: bFalse},        // CKA_EXTRACTABLE
+			attribute{typ: attributeNeverExtractable, byte: bTrue},    // CKA_NEVER_EXTRACTABLE
+			attribute{typ: attributeAlwaysAuthenticate, byte: bFalse}, // CKA_ALWAYS_AUTHENTICATE
+			attribute{typ: attributeSign, byte: bTrue},                // CKA_SIGN
+			attribute{typ: attributeUnwrap, byte: bFalse},             // CKA_UNWRAP
 		)
 	}
 
@@ -470,16 +480,17 @@ func NewX509CertificateObject(cert *x509.Certificate) (Object, error) {
 	return Object{
 		id: id,
 		attributes: []attribute{
-			{typ: attributeToken, byte: bTrue},                // CKA_TOKEN
-			{typ: attributeClass, ulong: &objectClass},        // CKA_CLASS
-			{typ: attributeCertificateType, ulong: &certType}, // CKA_CERTIFICATE_TYPE
-			{typ: attributeSubject, bytes: cert.RawSubject},   // CKA_SUBJECT
-			{typ: attributeIssuer, bytes: cert.RawIssuer},     // CKA_ISSUER
-			{typ: attributeValue, bytes: cert.Raw},            // CKA_VALUE
-			{typ: attributeID, bytes: derSerial},              // CKA_ID (should match pubKey and privKey's ID)
-			{typ: attributeSerialNumber, bytes: derSerial},    // CKA_SERIAL_NUMBER
-			{typ: attributeStartDate, date: &cert.NotBefore},  // CKA_START_DATE
-			{typ: attributeEndDate, date: &cert.NotAfter},     // CKA_END_DATE
+			{typ: attributeToken, byte: bTrue},                                 // CKA_TOKEN
+			{typ: attributeClass, ulong: &objectClass},                         // CKA_CLASS
+			{typ: attributeCertificateType, ulong: &certType},                  // CKA_CERTIFICATE_TYPE
+			{typ: attributeSubject, bytes: cert.RawSubject},                    // CKA_SUBJECT
+			{typ: attributeIssuer, bytes: cert.RawIssuer},                      // CKA_ISSUER
+			{typ: attributeValue, bytes: cert.Raw},                             // CKA_VALUE
+			{typ: attributeID, bytes: derSerial},                               // CKA_ID (should match pubKey and privKey's ID)
+			{typ: attributeSerialNumber, bytes: derSerial},                     // CKA_SERIAL_NUMBER
+			{typ: attributeStartDate, date: &cert.NotBefore},                   // CKA_START_DATE
+			{typ: attributeEndDate, date: &cert.NotAfter},                      // CKA_END_DATE
+			{typ: attributePublicKeyInfo, bytes: cert.RawSubjectPublicKeyInfo}, // CKA_PUBLIC_KEY_INFO
 		},
 	}, nil
 }
@@ -664,6 +675,7 @@ func (a attributeType) valueType() int {
 		attributeExponent1,
 		attributeExponent2,
 		attributeCoefficient,
+		attributePublicKeyInfo,
 		attributePrime,
 		attributeSubprime,
 		attributeBase,
@@ -771,6 +783,7 @@ const (
 	attributeExponent1              attributeType = 0x00000126
 	attributeExponent2              attributeType = 0x00000127
 	attributeCoefficient            attributeType = 0x00000128
+	attributePublicKeyInfo          attributeType = 0x00000129
 	attributePrime                  attributeType = 0x00000130
 	attributeSubprime               attributeType = 0x00000131
 	attributeBase                   attributeType = 0x00000132
@@ -862,6 +875,7 @@ var attributeString = map[attributeType]string{
 	attributeExponent1:              "CKA_EXPONENT_1",
 	attributeExponent2:              "CKA_EXPONENT_2",
 	attributeCoefficient:            "CKA_COEFFICIENT",
+	attributePublicKeyInfo:          "CKA_PUBLIC_KEY_INFO",
 	attributePrime:                  "CKA_PRIME",
 	attributeSubprime:               "CKA_SUBPRIME",
 	attributeBase:                   "CKA_BASE",
